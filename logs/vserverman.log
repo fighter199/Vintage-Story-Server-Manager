@@ -1,0 +1,201 @@
+2026-04-25 19:44:45,617 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-25 19:44:45,620 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260425_194445.bak
+2026-04-25 19:44:45,620 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-25 19:44:45,624 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260425_194445.bak
+2026-04-25 19:44:45,624 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-25 19:44:45,625 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-25 19:44:45,625 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-25 19:44:45,631 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260425_194445.bak
+2026-04-25 19:44:45,632 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:06,814 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 00:23:06,818 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_002306.bak
+2026-04-26 00:23:06,818 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:06,818 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:06,822 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_002306.bak
+2026-04-26 00:23:06,822 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 00:23:06,822 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 00:23:06,822 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:06,823 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:06,825 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_002306.bak
+2026-04-26 00:23:06,825 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:06,825 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:09,696 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 00:23:09,701 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_002309.bak
+2026-04-26 00:23:09,701 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:09,702 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:09,705 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_002309.bak
+2026-04-26 00:23:09,706 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 00:23:09,706 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 00:23:09,706 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:09,706 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:09,710 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_002309.bak
+2026-04-26 00:23:09,710 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:09,710 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:30,192 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 00:23:30,196 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_002330.bak
+2026-04-26 00:23:30,196 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:30,197 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:30,200 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_002330.bak
+2026-04-26 00:23:30,200 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 00:23:30,201 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 00:23:30,201 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:30,201 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:30,205 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_002330.bak
+2026-04-26 00:23:30,205 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:23:30,206 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:23:30,209 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_002330.bak
+2026-04-26 00:23:30,210 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:52:11,997 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 00:52:12,000 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_005211.bak
+2026-04-26 00:52:12,001 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:52:12,002 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:52:12,005 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_005212.bak
+2026-04-26 00:52:12,006 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 00:52:12,006 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 00:52:12,006 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:52:12,006 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:52:12,008 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_005212.bak
+2026-04-26 00:52:12,009 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 00:52:12,009 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 00:52:12,051 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_005212.bak
+2026-04-26 00:52:12,051 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:03:47,911 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 01:03:47,914 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_010347.bak
+2026-04-26 01:03:47,915 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:03:47,915 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:03:47,918 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_010347.bak
+2026-04-26 01:03:47,918 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 01:03:47,918 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 01:03:47,918 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:03:47,919 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:03:47,922 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_010347.bak
+2026-04-26 01:03:47,923 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:03:47,923 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:03:47,926 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_010347.bak
+2026-04-26 01:03:47,926 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:04:13,357 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 01:04:13,376 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_010413.bak
+2026-04-26 01:04:13,376 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:04:13,376 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:04:13,402 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_010413.bak
+2026-04-26 01:04:13,402 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 01:04:13,402 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 01:04:13,402 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:04:13,402 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:04:13,405 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_010413.bak
+2026-04-26 01:04:13,406 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:04:13,406 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:04:13,409 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_010413.bak
+2026-04-26 01:04:13,409 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:07:02,424 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 01:07:02,428 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_010702.bak
+2026-04-26 01:07:02,429 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:07:02,429 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:07:02,434 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_010702.bak
+2026-04-26 01:07:02,435 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 01:07:02,435 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 01:07:02,435 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:07:02,435 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:07:02,438 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_010702.bak
+2026-04-26 01:07:02,438 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:07:02,439 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:07:02,441 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_010702.bak
+2026-04-26 01:07:02,441 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:10:38,111 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 01:10:38,114 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_011038.bak
+2026-04-26 01:10:38,114 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:10:38,115 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:10:38,118 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_011038.bak
+2026-04-26 01:10:38,118 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 01:10:38,118 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 01:10:38,118 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:10:38,118 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:10:38,122 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_011038.bak
+2026-04-26 01:10:38,122 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 01:10:38,122 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 01:10:38,127 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_011038.bak
+2026-04-26 01:10:38,127 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:10:51,003 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 02:10:51,005 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_021051.bak
+2026-04-26 02:10:51,006 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 02:10:51,006 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:10:51,048 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_021051.bak
+2026-04-26 02:10:51,049 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 02:10:51,049 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 02:10:51,049 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 02:10:51,049 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:10:51,052 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_021051.bak
+2026-04-26 02:10:51,052 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 02:10:51,053 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:10:51,055 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_021051.bak
+2026-04-26 02:10:51,055 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:25:43,089 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 02:25:43,092 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_022543.bak
+2026-04-26 02:25:43,093 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 02:25:43,093 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:25:43,098 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_022543.bak
+2026-04-26 02:25:43,098 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 02:25:43,098 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 02:25:43,098 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 02:25:43,099 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:25:43,102 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_022543.bak
+2026-04-26 02:25:43,102 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 02:25:43,102 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 02:25:43,106 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_022543.bak
+2026-04-26 02:25:43,106 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:31,174 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 09:55:31,178 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_095531.bak
+2026-04-26 09:55:31,178 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:31,178 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:31,181 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_095531.bak
+2026-04-26 09:55:31,181 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 09:55:31,181 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 09:55:31,181 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:31,181 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:31,184 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_095531.bak
+2026-04-26 09:55:31,184 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:31,184 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:31,188 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_095531.bak
+2026-04-26 09:55:31,188 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:34,217 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 09:55:34,221 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_095534.bak
+2026-04-26 09:55:34,221 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:34,221 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:34,264 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_095534.bak
+2026-04-26 09:55:34,264 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 09:55:34,264 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 09:55:34,265 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:34,265 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:34,267 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_095534.bak
+2026-04-26 09:55:34,268 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:34,268 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:34,271 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_095534.bak
+2026-04-26 09:55:34,271 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:50,781 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 09:55:50,785 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_095550.bak
+2026-04-26 09:55:50,785 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:50,785 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:50,788 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_095550.bak
+2026-04-26 09:55:50,788 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 09:55:50,788 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 09:55:50,788 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:50,789 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:50,793 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_095550.bak
+2026-04-26 09:55:50,794 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 09:55:50,794 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 09:55:50,797 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_095550.bak
+2026-04-26 09:55:50,797 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 10:00:27,425 [WARNING] VSSM: settings load failed (Expecting value: line 1 column 1 (char 0)) — using defaults
+2026-04-26 10:00:27,428 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_100027.bak
+2026-04-26 10:00:27,428 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 10:00:27,428 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 10:00:27,467 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v1.20260426_100027.bak
+2026-04-26 10:00:27,467 [INFO] VSSM: Migrated settings schema 1 → 2
+2026-04-26 10:00:27,467 [INFO] VSSM: Migrated settings schema 2 → 3
+2026-04-26 10:00:27,467 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 10:00:27,467 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 10:00:27,471 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v3.20260426_100027.bak
+2026-04-26 10:00:27,471 [INFO] VSSM: Migrated settings schema 3 → 4 (custom_commands are now per-profile)
+2026-04-26 10:00:27,471 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)
+2026-04-26 10:00:27,475 [INFO] VSSM: Wrote pre-migration backup: vserverman_settings.json.v4.20260426_100027.bak
+2026-04-26 10:00:27,476 [INFO] VSSM: Migrated settings schema 4 → 5 (added player_count_poll_secs)

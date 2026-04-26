@@ -1,0 +1,74 @@
+# =============================================================================
+# VSSM — Vintage Story Server Manager
+# Optional runtime dependencies
+# =============================================================================
+#
+# VSSM runs on the Python standard library alone. Everything below is
+# OPTIONAL — the app starts and works without any of these. They just
+# unlock better behaviour where they're present:
+#
+#   psutil     accurate per-process CPU and RAM readings in the resource
+#              panel. Without it, the panel falls back to whole-system
+#              stats and the per-process columns stay blank.
+#
+#   packaging  PEP 440-compliant version parsing for mod ordering and
+#              update detection. Without it, VSSM uses an internal
+#              fallback comparator that's correct for normal SemVer but
+#              treats some pre-release labels (e.g. `pre` vs `rc`) more
+#              strictly than the official spec does.
+#
+# -----------------------------------------------------------------------------
+# RECOMMENDED INSTALL — Windows / macOS / Linux
+# -----------------------------------------------------------------------------
+# Python 3.10 or newer is recommended.
+# Run from the directory containing this file (the VSSM package root):
+#
+#     python -m pip install --upgrade pip
+#     python -m pip install -r requirements.txt
+#
+# On Windows, if `python` opens the Microsoft Store instead, use:
+#
+#     py -3 -m pip install -r requirements.txt
+#
+# -----------------------------------------------------------------------------
+# RECOMMENDED INSTALL — using a virtual environment (cleaner)
+# -----------------------------------------------------------------------------
+# A venv keeps these libraries scoped to VSSM instead of installing them
+# globally. Create it once, then activate it whenever you launch VSSM:
+#
+#     python -m venv .venv
+#     # Windows (PowerShell):
+#     .venv\Scripts\Activate.ps1
+#     # Windows (cmd.exe):
+#     .venv\Scripts\activate.bat
+#     # macOS / Linux:
+#     source .venv/bin/activate
+#
+#     python -m pip install --upgrade pip
+#     python -m pip install -r requirements.txt
+#     python VSSM.py
+#
+# -----------------------------------------------------------------------------
+# Tkinter (NOT installable via pip)
+# -----------------------------------------------------------------------------
+# VSSM's UI uses tkinter, which ships with Python on Windows and macOS.
+# On Debian/Ubuntu/Mint and similar distros it's a separate system package:
+#
+#     sudo apt install python3-tk
+#
+# On Fedora / RHEL:
+#
+#     sudo dnf install python3-tkinter
+#
+# On Arch / Manjaro:
+#
+#     sudo pacman -S tk
+#
+# -----------------------------------------------------------------------------
+# UNINSTALL
+# -----------------------------------------------------------------------------
+#     python -m pip uninstall -y -r requirements.txt
+# =============================================================================
+
+psutil>=5.9
+packaging>=21.0

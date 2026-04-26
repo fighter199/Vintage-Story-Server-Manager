@@ -1,0 +1,709 @@
+{
+  "_schema_version": 2,
+  "_note": "Each entry describes ONE concrete command form. 'template' is the string to send, with {argname} placeholders filled in from the 'args' list. Arg types: text, int, float, choice, player, coord, coord_rel, coord_abs, optional_text.",
+
+  "Server control and configuration": {
+    "/stop": {
+      "template": "/stop",
+      "description": "Stop and shut down the server cleanly.",
+      "args": []
+    },
+    "/autosavenow": {
+      "template": "/autosavenow",
+      "description": "Force an immediate auto-save.",
+      "args": []
+    },
+    "/stats": {
+      "template": "/stats",
+      "description": "Show current server statistics: tick rate, memory usage, etc.",
+      "args": []
+    },
+    "/list clients": {
+      "template": "/list clients",
+      "description": "Show currently connected clients.",
+      "args": []
+    },
+    "/list banned": {
+      "template": "/list banned",
+      "description": "Show the list of banned players.",
+      "args": []
+    },
+    "/list role": {
+      "template": "/list role",
+      "description": "Show all configured privilege roles.",
+      "args": []
+    },
+    "/list privileges": {
+      "template": "/list privileges",
+      "description": "Show all configured privileges.",
+      "args": []
+    },
+    "/announce": {
+      "template": "/announce {message}",
+      "description": "Broadcast a message in all chat groups.",
+      "args": [
+        {"name": "message", "type": "text", "hint": "Text to broadcast"}
+      ]
+    },
+    "/allowlan": {
+      "template": "/allowlan {state}",
+      "description": "Toggle external LAN connections (non-dedicated servers only).",
+      "args": [
+        {"name": "state", "type": "choice", "choices": ["on", "off"]}
+      ]
+    },
+
+    "/serverconfig maxchunkradius": {
+      "template": "/serverconfig maxchunkradius {radius}",
+      "description": "Set the maximum chunk radius a player may load.",
+      "args": [ {"name": "radius", "type": "int", "hint": "Chunks"} ]
+    },
+    "/serverconfig maxclients": {
+      "template": "/serverconfig maxclients {count}",
+      "description": "Set the maximum number of connected players.",
+      "args": [ {"name": "count", "type": "int"} ]
+    },
+    "/serverconfig password": {
+      "template": "/serverconfig password {password}",
+      "description": "Set the server password (no spaces allowed).",
+      "args": [ {"name": "password", "type": "text", "hint": "No spaces"} ]
+    },
+    "/serverconfig nopassword": {
+      "template": "/serverconfig nopassword",
+      "description": "Remove the server password.",
+      "args": []
+    },
+    "/serverconfig antiabuse": {
+      "template": "/serverconfig antiabuse {level}",
+      "description": "Set the anti-abuse protection level.",
+      "args": [
+        {"name": "level", "type": "choice", "choices": ["Off", "Basic", "Pedantic"]}
+      ]
+    },
+    "/serverconfig allowpvp": {
+      "template": "/serverconfig allowpvp {value}",
+      "description": "Enable or disable PvP.",
+      "args": [ {"name": "value", "type": "choice", "choices": ["true", "false"]} ]
+    },
+    "/serverconfig allowfirespread": {
+      "template": "/serverconfig allowfirespread {value}",
+      "description": "Enable or disable fire spread.",
+      "args": [ {"name": "value", "type": "choice", "choices": ["true", "false"]} ]
+    },
+    "/serverconfig allowfallingblocks": {
+      "template": "/serverconfig allowfallingblocks {value}",
+      "description": "Enable or disable block gravity.",
+      "args": [ {"name": "value", "type": "choice", "choices": ["true", "false"]} ]
+    },
+    "/serverconfig entityspawning": {
+      "template": "/serverconfig entityspawning {value}",
+      "description": "Global entity spawning toggle.",
+      "args": [ {"name": "value", "type": "choice", "choices": ["true", "false"]} ]
+    },
+    "/serverconfig tickrate": {
+      "template": "/serverconfig tickrate {value}",
+      "description": "Set server tick rate (10–100). Higher = more responsive.",
+      "args": [ {"name": "value", "type": "int", "hint": "10–100"} ]
+    },
+    "/serverconfig whitelistmode": {
+      "template": "/serverconfig WhitelistMode {mode}",
+      "description": "Control whitelist behavior.",
+      "args": [ {"name": "mode", "type": "choice", "choices": ["default", "off", "on"]} ]
+    },
+    "/serverconfig passtimewhenempty": {
+      "template": "/serverconfig passtimewhenempty {value}",
+      "description": "Should time pass when no players are connected?",
+      "args": [ {"name": "value", "type": "choice", "choices": ["true", "false"]} ]
+    },
+    "/serverconfig defaultspawn": {
+      "template": "/serverconfig defaultspawn {x} {y} {z}",
+      "description": "Set the default spawn point. Leave y blank to auto-pick surface.",
+      "args": [
+        {"name": "x", "type": "int"},
+        {"name": "y", "type": "int", "optional": true, "hint": "blank = surface"},
+        {"name": "z", "type": "int"}
+      ]
+    },
+    "/serverconfig setspawnhere": {
+      "template": "/serverconfig setspawnhere",
+      "description": "Set the default spawn point to the caller's current position.",
+      "args": []
+    }
+  },
+
+  "Moderator / Admin": {
+    "/help": {
+      "template": "/help",
+      "description": "List all server commands.",
+      "args": []
+    },
+    "/kick": {
+      "template": "/kick {player} {reason}",
+      "description": "Kick a player from the server.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "reason", "type": "text", "optional": true}
+      ]
+    },
+    "/ban": {
+      "template": "/ban {player} {reason}",
+      "description": "Ban a player.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "reason", "type": "text", "optional": true}
+      ]
+    },
+    "/unban": {
+      "template": "/unban {player}",
+      "description": "Unban a player.",
+      "args": [ {"name": "player", "type": "text", "hint": "Name of banned player"} ]
+    },
+    "/clearinv": {
+      "template": "/clearinv",
+      "description": "Clear your own inventory.",
+      "args": []
+    },
+    "/kill": {
+      "template": "/kill",
+      "description": "Kill yourself (suicide).",
+      "args": []
+    },
+    "/pm": {
+      "template": "/pm {player} {message}",
+      "description": "Send a private message.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "message", "type": "text"}
+      ]
+    },
+    "/nexttempstorm": {
+      "template": "/nexttempstorm",
+      "description": "Show days until next temporal storm.",
+      "args": []
+    },
+    "/nexttempstorm now": {
+      "template": "/nexttempstorm now",
+      "description": "Trigger a temporal storm immediately.",
+      "args": []
+    },
+
+    "/gamemode (self)": {
+      "template": "/gamemode {mode}",
+      "description": "Change your own game mode.",
+      "args": [
+        {"name": "mode", "type": "choice",
+         "choices": ["survival", "creative", "guest", "spectator", "0", "1", "2", "3"]}
+      ]
+    },
+    "/gamemode (other player)": {
+      "template": "/gamemode {player} {mode}",
+      "description": "Change another player's game mode.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "mode", "type": "choice",
+         "choices": ["survival", "creative", "guest", "spectator", "0", "1", "2", "3"]}
+      ]
+    },
+
+    "/tp (to coords)": {
+      "template": "/tp {x} {y} {z}",
+      "description": "Teleport yourself to pretty coordinates.",
+      "args": [
+        {"name": "x", "type": "int"},
+        {"name": "y", "type": "int"},
+        {"name": "z", "type": "int"}
+      ]
+    },
+    "/tp (to absolute coords)": {
+      "template": "/tp ={x} ={y} ={z}",
+      "description": "Teleport to absolute coordinates (debug screen CTRL+F3).",
+      "args": [
+        {"name": "x", "type": "int"},
+        {"name": "y", "type": "int"},
+        {"name": "z", "type": "int"}
+      ]
+    },
+    "/tp (relative offset)": {
+      "template": "/tp ~{dx} ~{dy} ~{dz}",
+      "description": "Teleport by a relative offset from current position.",
+      "args": [
+        {"name": "dx", "type": "int"},
+        {"name": "dy", "type": "int"},
+        {"name": "dz", "type": "int"}
+      ]
+    },
+    "/tp (to player)": {
+      "template": "/tp {player}",
+      "description": "Teleport yourself to a player.",
+      "args": [ {"name": "player", "type": "player"} ]
+    },
+    "/tp (player to coords)": {
+      "template": "/tp {player} {x} {y} {z}",
+      "description": "Teleport a player to coordinates.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "x", "type": "int"},
+        {"name": "y", "type": "int"},
+        {"name": "z", "type": "int"}
+      ]
+    },
+    "/tpwp": {
+      "template": "/tpwp {waypoint}",
+      "description": "Teleport to a waypoint (prefix match on name).",
+      "args": [ {"name": "waypoint", "type": "text"} ]
+    },
+
+    "/giveblock": {
+      "template": "/giveblock {code} {qty} {player}",
+      "description": "Give a block to a player.",
+      "args": [
+        {"name": "code", "type": "text", "hint": "e.g. cobblestone-granite"},
+        {"name": "qty", "type": "int", "default": "1"},
+        {"name": "player", "type": "player", "optional": true, "hint": "blank = self"}
+      ]
+    },
+    "/giveitem": {
+      "template": "/giveitem {code} {qty} {player}",
+      "description": "Give an item to a player.",
+      "args": [
+        {"name": "code", "type": "text", "hint": "e.g. flint, ingot-copper"},
+        {"name": "qty", "type": "int", "default": "1"},
+        {"name": "player", "type": "player", "optional": true, "hint": "blank = self"}
+      ]
+    }
+  },
+
+  "Privilege Control": {
+    "/op": {
+      "template": "/op {player}",
+      "description": "Grant admin role to a player (alias of /player [name] role admin).",
+      "args": [ {"name": "player", "type": "player"} ]
+    },
+    "/player role": {
+      "template": "/player {player} role {role}",
+      "description": "Set a player's privilege role.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "role", "type": "text", "hint": "e.g. admin, suplayer"}
+      ]
+    },
+	"/player allowcharselonce": {
+      "template": "/player {player} allowcharselonce",
+      "description": "Allows for character change appearance/class. The player must type .charsel to do this change.",
+      "args": [ {"name": "player", "type": "player"} ]
+    },
+    "/player privilege grant": {
+      "template": "/player {player} privilege grant {privilege}",
+      "description": "Grant a privilege to a player.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "privilege", "type": "text"}
+      ]
+    },
+    "/player privilege revoke": {
+      "template": "/player {player} privilege revoke {privilege}",
+      "description": "Revoke a privilege from a player.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "privilege", "type": "text"}
+      ]
+    },
+    "/player whitelist on": {
+      "template": "/player {player} whitelist on",
+      "description": "Add a player to the whitelist.",
+      "args": [ {"name": "player", "type": "player"} ]
+    },
+    "/player gamemode": {
+      "template": "/player {player} gamemode {mode}",
+      "description": "Set a player's game mode.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "mode", "type": "choice",
+         "choices": ["survival", "creative", "guest", "spectator", "0", "1", "2", "3"]}
+      ]
+    },
+    "/player clearinv": {
+      "template": "/player {player} clearinv",
+      "description": "Clear a player's entire inventory.",
+      "args": [ {"name": "player", "type": "player"} ]
+    },
+    "/player entity health": {
+      "template": "/player {player} entity health {value}",
+      "description": "Set a player's health ratio (0.1 to 1).",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "value", "type": "float", "hint": "0.1 – 1"}
+      ]
+    },
+    "/player entity satiety": {
+      "template": "/player {player} entity satiety {value}",
+      "description": "Set a player's satiety ratio (0.1 to 1).",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "value", "type": "float", "hint": "0.1 – 1"}
+      ]
+    },
+    "/player entity temp": {
+      "template": "/player {player} entity temp {value}",
+      "description": "Set a player's body temperature.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "value", "type": "float"}
+      ]
+    },
+    "/player wipedata": {
+      "template": "/player {player} wipedata",
+      "description": "Wipe a player's inventory, skin, and class.",
+      "args": [ {"name": "player", "type": "player"} ]
+    },
+
+    "/role privilege grant": {
+      "template": "/role {role} privilege grant {privilege}",
+      "description": "Grant a privilege to all members of a role.",
+      "args": [
+        {"name": "role", "type": "text"},
+        {"name": "privilege", "type": "text"}
+      ]
+    },
+    "/role privilege revoke": {
+      "template": "/role {role} privilege revoke {privilege}",
+      "description": "Revoke a privilege from a role.",
+      "args": [
+        {"name": "role", "type": "text"},
+        {"name": "privilege", "type": "text"}
+      ]
+    },
+    "/role spawnpoint": {
+      "template": "/role {role} spawnpoint {x} {y} {z}",
+      "description": "Set a role-specific spawn point.",
+      "args": [
+        {"name": "role", "type": "text"},
+        {"name": "x", "type": "int"},
+        {"name": "y", "type": "int"},
+        {"name": "z", "type": "int"}
+      ]
+    },
+    "/role landclaimallowance": {
+      "template": "/role {role} landclaimallowance {value}",
+      "description": "Set max claimable area (cubic meters) for a role.",
+      "args": [
+        {"name": "role", "type": "text"},
+        {"name": "value", "type": "int"}
+      ]
+    }
+  },
+
+  "World Control": {
+    "/time set (named)": {
+      "template": "/time set {when}",
+      "description": "Set the clock to a named time of day.",
+      "args": [
+        {"name": "when", "type": "choice",
+         "choices": ["lunch","day","night","latenight","morning","latemorning",
+                     "sunrise","sunset","afternoon","midnight","witchinghour"]}
+      ]
+    },
+    "/time set (hour)": {
+      "template": "/time set {hour}",
+      "description": "Set the clock to a specific hour (0–24, decimals OK).",
+      "args": [ {"name": "hour", "type": "float", "hint": "e.g. 14.5"} ]
+    },
+    "/time stop": {
+      "template": "/time stop",
+      "description": "Stop time and time-affected processes.",
+      "args": []
+    },
+    "/time resume": {
+      "template": "/time resume",
+      "description": "Resume time and time-affected processes.",
+      "args": []
+    },
+    "/time setmonth": {
+      "template": "/time setmonth {month}",
+      "description": "Set the calendar month.",
+      "args": [
+        {"name": "month", "type": "choice",
+         "choices": ["jan","feb","mar","apr","may","jun",
+                     "jul","aug","sep","oct","nov","dec"]}
+      ]
+    },
+    "/time add": {
+      "template": "/time add {hours}:{minutes}",
+      "description": "Add hours and minutes to the calendar.",
+      "args": [
+        {"name": "hours", "type": "int"},
+        {"name": "minutes", "type": "int"}
+      ]
+    },
+    "/time speed": {
+      "template": "/time speed {speed}",
+      "description": "Show or set game time speed (default 60).",
+      "args": [ {"name": "speed", "type": "int", "hint": "0–9999"} ]
+    },
+    "/time hoursperday": {
+      "template": "/time hoursperday {hours}",
+      "description": "Show or set hours per day (default 24).",
+      "args": [ {"name": "hours", "type": "int"} ]
+    },
+
+    "/weather setprecip": {
+      "template": "/weather setprecip {value}",
+      "description": "Override precipitation intensity. -1=none, 0=dry, 1=max.",
+      "args": [ {"name": "value", "type": "float", "hint": "-1 … 1"} ]
+    },
+    "/weather setprecipa": {
+      "template": "/weather setprecipa",
+      "description": "Reset precipitation override (back to automatic).",
+      "args": []
+    },
+    "/weather stoprain": {
+      "template": "/weather stoprain",
+      "description": "Stop current rain.",
+      "args": []
+    },
+    "/weather acp": {
+      "template": "/weather acp",
+      "description": "Toggle auto-changing weather patterns.",
+      "args": []
+    },
+    "/weather setw": {
+      "template": "/weather setw {pattern}",
+      "description": "Set the current wind pattern.",
+      "args": [
+        {"name": "pattern", "type": "choice",
+         "choices": ["still","lightbreeze","mediumbreeze","strongbreeze","storm"]}
+      ]
+    },
+    "/weather t": {
+      "template": "/weather t",
+      "description": "Transition to a random weather pattern.",
+      "args": []
+    },
+    "/weather c": {
+      "template": "/weather c",
+      "description": "Quickly transition to a random weather pattern.",
+      "args": []
+    },
+
+    "/entity spawnat": {
+      "template": "/entity spawnat {type} {amount} ={x} ={y} ={z} {radius}",
+      "description": "Spawn entities by type at given coordinates.",
+      "args": [
+        {"name": "type", "type": "text", "hint": "e.g. wolf-male"},
+        {"name": "amount", "type": "int", "default": "1"},
+        {"name": "x", "type": "int"},
+        {"name": "y", "type": "int"},
+        {"name": "z", "type": "int"},
+        {"name": "radius", "type": "int", "default": "1"}
+      ]
+    },
+    "/entity remove": {
+      "template": "/entity remove {filter}",
+      "description": "Remove entities matching a filter.",
+      "args": [ {"name": "filter", "type": "text",
+                 "hint": "e.g. e[type=gazelle,range=10]"} ]
+    },
+    "/entity count": {
+      "template": "/entity count {filter}",
+      "description": "Count entities matching a filter.",
+      "args": [ {"name": "filter", "type": "text"} ]
+    },
+    "/entity cmd wipeall": {
+      "template": "/entity cmd wipeall",
+      "description": "Remove all entities except players from loaded chunks.",
+      "args": []
+    },
+
+    "/worldconfig": {
+      "template": "/worldconfig {key} {value}",
+      "description": "Modify a world configuration setting.",
+      "args": [
+        {"name": "key", "type": "text", "hint": "e.g. colorAccurateWorldmap"},
+        {"name": "value", "type": "text"}
+      ]
+    }
+  },
+
+  "Waypoints": {
+    "/waypoint list": {
+      "template": "/waypoint list",
+      "description": "List all your waypoints.",
+      "args": []
+    },
+    "/waypoint add": {
+      "template": "/waypoint add {color} {title}",
+      "description": "Add a waypoint at your current position.",
+      "args": [
+        {"name": "color", "type": "choice",
+         "choices": ["red","orange","yellow","green","cyan","blue","purple",
+                     "pink","white","gray","black","gold","brown"]},
+        {"name": "title", "type": "text"}
+      ]
+    },
+    "/waypoint remove": {
+      "template": "/waypoint remove {id}",
+      "description": "Remove a waypoint by its ID (see /waypoint list).",
+      "args": [ {"name": "id", "type": "int"} ]
+    }
+  },
+
+  "Land Claiming": {
+    "/land list": {
+      "template": "/land list",
+      "description": "List all your claims.",
+      "args": []
+    },
+    "/land info": {
+      "template": "/land info",
+      "description": "Claim info at current position.",
+      "args": []
+    },
+    "/land free": {
+      "template": "/land free {index}",
+      "description": "Delete one of your claims by index.",
+      "args": [ {"name": "index", "type": "int"} ]
+    },
+    "/land adminfree": {
+      "template": "/land adminfree",
+      "description": "Admin: delete any player's claim at current position.",
+      "args": []
+    },
+    "/land claim new": {
+      "template": "/land claim new",
+      "description": "Start a new claim.",
+      "args": []
+    },
+    "/land claim save": {
+      "template": "/land claim save {description}",
+      "description": "Save the current claim.",
+      "args": [ {"name": "description", "type": "text", "optional": true} ]
+    },
+    "/land claim cancel": {
+      "template": "/land claim cancel",
+      "description": "Discard claim modifications.",
+      "args": []
+    },
+    "/land claim grant": {
+      "template": "/land claim grant {player} {access}",
+      "description": "Grant another player access to your claim.",
+      "args": [
+        {"name": "player", "type": "player"},
+        {"name": "access", "type": "choice", "choices": ["use", "all"]}
+      ]
+    },
+    "/land claim revoke": {
+      "template": "/land claim revoke {player}",
+      "description": "Revoke a player's access to your claim.",
+      "args": [ {"name": "player", "type": "player"} ]
+    },
+    "/land claim grow": {
+      "template": "/land claim grow {direction} {amount}",
+      "description": "Grow claim in a direction.",
+      "args": [
+        {"name": "direction", "type": "choice",
+         "choices": ["north","east","south","west","up","down"]},
+        {"name": "amount", "type": "int", "hint": "-99 … 99"}
+      ]
+    },
+    "/land claim shrink": {
+      "template": "/land claim shrink {direction} {amount}",
+      "description": "Shrink claim in a direction.",
+      "args": [
+        {"name": "direction", "type": "choice",
+         "choices": ["north","east","south","west","up","down"]},
+        {"name": "amount", "type": "int"}
+      ]
+    }
+  },
+
+  "Utility & Debug": {
+    "/genbackup": {
+      "template": "/genbackup {filename}",
+      "description": "Back up current save (live-safe). Filename is optional.",
+      "args": [ {"name": "filename", "type": "text", "optional": true} ]
+    },
+    "/fixmapping applyall": {
+      "template": "/fixmapping applyall",
+      "description": "Apply block/item remapping (version-upgrade fix).",
+      "args": []
+    },
+    "/info ident": {
+      "template": "/info ident",
+      "description": "Show world identifier.",
+      "args": []
+    },
+    "/info seed": {
+      "template": "/info seed",
+      "description": "Show world seed.",
+      "args": []
+    },
+    "/info createdversion": {
+      "template": "/info createdversion",
+      "description": "Show the version the world was created in.",
+      "args": []
+    },
+    "/info mapsize": {
+      "template": "/info mapsize",
+      "description": "Show world size.",
+      "args": []
+    },
+    "/chunk printmap": {
+      "template": "/chunk printmap",
+      "description": "Export a PNG map of loaded chunks.",
+      "args": []
+    },
+    "/chunk unload": {
+      "template": "/chunk unload {value}",
+      "description": "Toggle auto-unloading of out-of-range chunks.",
+      "args": [ {"name": "value", "type": "choice", "choices": ["0", "1"]} ]
+    },
+    "/chunk forceload": {
+      "template": "/chunk forceload {x1} {z1} {x2} {z2}",
+      "description": "Force-load and lock a chunk area.",
+      "args": [
+        {"name": "x1", "type": "int"},
+        {"name": "z1", "type": "int"},
+        {"name": "x2", "type": "int"},
+        {"name": "z2", "type": "int"}
+      ]
+    },
+    "/moddb list": {
+      "template": "/moddb list",
+      "description": "List installed mods.",
+      "args": []
+    },
+    "/moddb install": {
+      "template": "/moddb install {modid} {gameVersion}",
+      "description": "Install a mod by ModDB id.",
+      "args": [
+        {"name": "modid", "type": "text"},
+        {"name": "gameVersion", "type": "text", "optional": true}
+      ]
+    },
+    "/moddb remove": {
+      "template": "/moddb remove {modid}",
+      "description": "Uninstall a mod.",
+      "args": [ {"name": "modid", "type": "text"} ]
+    },
+    "/moddb search": {
+      "template": "/moddb search {query}",
+      "description": "Full-text search on ModDB.",
+      "args": [ {"name": "query", "type": "text"} ]
+    },
+    "/debug rift clear": {
+      "template": "/debug rift clear",
+      "description": "Immediately remove all loaded rifts.",
+      "args": []
+    },
+    "/debug rift spawn": {
+      "template": "/debug rift spawn {quantity}",
+      "description": "Spawn N rifts near the caller.",
+      "args": [ {"name": "quantity", "type": "int"} ]
+    },
+    "/whenwillitstopraining": {
+      "template": "/whenwillitstopraining",
+      "description": "Tells you when the rain should stop.",
+      "args": []
+    }
+  }
+}
