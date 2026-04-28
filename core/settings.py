@@ -124,6 +124,29 @@ def import_rules_from_json(payload):
     return _impl(payload)
 
 
+
+
+# -----------------------------------------------------------------------
+# Autorun rules persistence (per-profile, like custom_commands)
+# -----------------------------------------------------------------------
+def load_autorun_rules(settings: dict) -> list[dict]:
+    """Return the autorun rule list for the active profile.
+
+    Falls back to an empty list if the active profile has nothing
+    configured (the common case for profiles that existed before the
+    schema v6 migration touched them)."""
+    profile = get_active_profile(settings)
+    rules = profile.get("autorun_rules")
+    if isinstance(rules, list):
+        return rules
+    return []
+
+
+def save_autorun_rules(settings: dict, rules: list[dict]) -> None:
+    """Persist the autorun rule list into the active profile (in-place)."""
+    profile = get_active_profile(settings)
+    profile["autorun_rules"] = rules
+
 # -----------------------------------------------------------------------
 # Schema migration
 # -----------------------------------------------------------------------
@@ -191,6 +214,15 @@ def _migrate(data: dict, path: str) -> dict:
         data.setdefault("player_count_poll_secs", 30)
         LOG.info("Migrated settings schema 4 → 5 "
                  "(added player_count_poll_secs)")
+
+    # v5 → v6: each profile gets its own autorun_rules slot
+    if schema < 6:
+        profiles = data.setdefault("profiles", {})
+        for name, profile in profiles.items():
+            if isinstance(profile, dict):
+                profile.setdefault("autorun_rules", [])
+        LOG.info("Migrated settings schema 5 → 6 "
+                 "(added autorun_rules per profile)")
 
     data["_schema_version"] = SETTINGS_SCHEMA_VERSION
     return _heal(data)

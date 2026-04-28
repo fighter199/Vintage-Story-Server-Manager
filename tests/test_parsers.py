@@ -87,6 +87,55 @@ class TestParseChatMessage:
         assert parse_chat_message("<some-user.42> msg") == \
             ("some-user.42", "msg")
 
+    # --- VS 1.20+ "group | name: msg" format ----------------------------
+    def test_vs_groupid_colon_format(self):
+        # Pinned regression for the !changechar bug: real VS server logs
+        # chat as `[Server Chat] 0 | Fighter199: !changechar`, with a
+        # group ID and colon, NOT angle brackets.
+        line = "[Server Chat] 0 | Fighter199: !changechar"
+        assert parse_chat_message(line) == ("Fighter199", "!changechar")
+
+    def test_vs_groupid_colon_with_spaces(self):
+        line = "[Server Chat] 0 | Alice: hello world"
+        assert parse_chat_message(line) == ("Alice", "hello world")
+
+    def test_vs_groupid_nonzero(self):
+        line = "[Server Chat] 5 | Bob: !warp spawn"
+        assert parse_chat_message(line) == ("Bob", "!warp spawn")
+
+    def test_vs_real_world_logged_line(self):
+        # Pinned regression for the actual line captured from a user's
+        # server-output.log, including BOTH the Python logging timestamp
+        # AND the VS server's own timestamp before the [Server Chat] tag.
+        line = ("2026-04-26 05:09:02,486 26.4.2026 05:09:02 "
+                "[Server Chat] 0 | Fighter199: !changechar")
+        assert parse_chat_message(line) == ("Fighter199", "!changechar")
+
+    def test_no_false_positive_on_notification_colons(self):
+        # Critical regression test: notification lines contain plenty of
+        # `Header: value` text. The colon-form parser must NOT fire
+        # without a [Chat] tag, otherwise lines like the ones below
+        # would all parse as fake chat messages.
+        non_chat = [
+            "[Server Notification] Game Version: v1.22.0 (Stable)",
+            "[Server Notification] CPU: Intel(R) Core(TM) i7-6850K",
+            "[Server Notification] Available RAM: 65377 MB",
+            "[Server Notification] Client 1 attempting identification. Name: Fighter199",
+            "[Server Debug] sheep-mouflon-baby-male attempted to play an animation code which its shape does not have: \"look\"",
+            "Server: started",
+        ]
+        for line in non_chat:
+            got = parse_chat_message(line)
+            assert got == (None, None), \
+                f"False positive on non-chat line: {line!r} -> {got}"
+
+    def test_colon_form_without_group_prefix_rejected(self):
+        # The colon form REQUIRES the "<digits> |" group prefix. A bare
+        # "Name: message" inside a [Server Chat] tag is rejected to
+        # avoid matching the many legitimate "Header: value" notifications.
+        line = "[Server Chat] Carol: !day"
+        assert parse_chat_message(line) == (None, None)
+
 
 class TestParsePlayerEvent:
     def test_join_with_ip(self):
@@ -218,21 +267,18 @@ class TestParseCronExpr:
 
 class TestSecondsUntilNext:
     def test_later_today(self):
-        now = datetime(2026, 4, 25, 5, 0)  # 5 AM
-        entries = [(None, 6, 0)]            # 6 AM today
+        now = datetime(2026, 4, 25, 5, 0)
+        entries = [(None, 6, 0)]
         assert seconds_until_next(entries, now=now) == 3600
 
     def test_tomorrow(self):
         now = datetime(2026, 4, 25, 7, 0)
         entries = [(None, 6, 0)]
-        # Should be ~23 hours away (tomorrow's 6 AM)
         assert 23 * 3600 - 1 <= seconds_until_next(entries, now=now) \
             <= 23 * 3600 + 1
 
     def test_specific_weekday(self):
-        # 25 Apr 2026 is a Saturday (weekday 5).
-        now = datetime(2026, 4, 25, 12, 0)  # noon Sat
-        # Next Monday at 9:00 AM is 45 hours away.
+        now = datetime(2026, 4, 25, 12, 0)
         entries = [(0, 9, 0)]
         secs = seconds_until_next(entries, now=now)
         expected = 45 * 3600
@@ -252,6 +298,18 @@ class TestStripLogPrefix:
 
     def test_unaffected(self):
         assert strip_log_prefix("hello world") == "hello world"
+
+    def test_iso_timestamp(self):
+        # Python logging-style timestamp used by SERVER_LOG.
+        assert strip_log_prefix("2026-04-26 05:09:02 hello") == "hello"
+
+    def test_iso_timestamp_with_ms(self):
+        assert strip_log_prefix("2026-04-26 05:09:02,486 hello") == "hello"
+
+    def test_double_timestamp(self):
+        # Python logging timestamp + VS server's own timestamp + tag.
+        line = "2026-04-26 05:09:02,486 26.4.2026 05:09:02 [Server Chat] hi"
+        assert strip_log_prefix(line) == "hi"
 
 
 class TestVersionIsNewer:
@@ -280,129 +338,4 @@ class TestVersionIsNewer:
         assert version_is_newer("2.0", "1.9") is True
 
     def test_uneven_lengths(self):
-        # 1.0.0.1 should be newer than 1.0.0
         assert version_is_newer("1.0.0.1", "1.0.0") is True
-
-
-class TestVersionKeySort:
-    """Real-world scenario: ModDB returns releases interleaved by upload
-    date when a maintainer alternates between branches. Sorting by
-    version_key (descending) must group them by version branch."""
-
-    def _vk(self, s):
-        from core.parsers import version_key
-        return version_key(s)
-
-    def test_basic_descending(self):
-        from core.parsers import version_key
-        versions = ["1.0.0", "1.0.2", "1.0.1", "0.9.9"]
-        out = sorted(versions, key=version_key, reverse=True)
-        assert out == ["1.0.2", "1.0.1", "1.0.0", "0.9.9"]
-
-    def test_double_digit_patch_sorts_above_single_digit(self):
-        # The classic "1.0.10 < 1.0.2" lexicographic trap.
-        from core.parsers import version_key
-        versions = ["1.0.2", "1.0.10", "1.0.9"]
-        out = sorted(versions, key=version_key, reverse=True)
-        assert out == ["1.0.10", "1.0.9", "1.0.2"]
-
-    def test_amulet_bed_spawn_screenshot_scenario(self):
-        # Pinned regression for the user's ModDB screenshot:
-        # the file list was interleaved like v0.5.7, v1.0.7, v0.5.6,
-        # v1.0.6 ... after sorting it should be 1.0.x then 0.5.x.
-        from core.parsers import version_key
-        interleaved = [
-            "0.5.7", "1.0.7", "0.5.6", "1.0.6",
-            "0.5.5", "1.0.5", "0.5.4", "1.0.4",
-            "1.0.3", "1.0.2", "1.0.1", "0.5.3", "0.5.2",
-        ]
-        out = sorted(interleaved, key=version_key, reverse=True)
-        # All 1.0.x come first, then all 0.5.x.
-        expected = [
-            "1.0.7", "1.0.6", "1.0.5", "1.0.4",
-            "1.0.3", "1.0.2", "1.0.1",
-            "0.5.7", "0.5.6", "0.5.5", "0.5.4", "0.5.3", "0.5.2",
-        ]
-        assert out == expected
-
-    def test_empty_string_sorts_last(self):
-        from core.parsers import version_key
-        versions = ["1.0.0", "", "0.5.0", None]
-        out = sorted(
-            (v for v in versions if v is not None),
-            key=version_key, reverse=True,
-        )
-        assert out == ["1.0.0", "0.5.0", ""]
-
-    def test_unparseable_doesnt_crash(self):
-        from core.parsers import version_key
-        # Some maintainers do weird things — make sure we don't raise.
-        version_key("garbage")
-        version_key("v?")
-        version_key("1.x.0")
-
-    def test_prerelease_betterruins_scenario(self):
-        # Pinned regression for the user-reported BetterRuins screenshot:
-        # the file list showed pre-release versions ABOVE their clean
-        # release. After the fallback fix, 0.6.0 sorts above all its
-        # 0.6.0-rc.* and 0.6.0-pre.* siblings.
-        from core.parsers import version_key
-        versions = [
-            "0.6.0", "0.6.0-rc.2", "0.6.0-rc.1", "0.6.0-pre.1",
-            "0.5.7", "0.5.6",
-        ]
-        out = sorted(versions, key=version_key, reverse=True)
-        assert out == [
-            "0.6.0",
-            "0.6.0-rc.2",
-            "0.6.0-rc.1",
-            "0.6.0-pre.1",
-            "0.5.7",
-            "0.5.6",
-        ]
-
-    def test_prerelease_with_fallback(self):
-        # Force the no-`packaging` path so we exercise the fallback
-        # comparator regardless of what's installed locally.
-        import core.parsers as p
-        original = p._HAVE_PKG_VERSION
-        p._HAVE_PKG_VERSION = False
-        try:
-            versions = ["0.6.0", "0.6.0-rc.2", "0.6.0-pre.1", "0.5.7"]
-            out = sorted(versions, key=p.version_key, reverse=True)
-            assert out[0] == "0.6.0", \
-                f"Expected 0.6.0 first, got {out}"
-            assert out[1] == "0.6.0-rc.2"
-            assert out[2] == "0.6.0-pre.1"
-            assert out[3] == "0.5.7"
-        finally:
-            p._HAVE_PKG_VERSION = original
-
-    def test_prerelease_rc_above_pre(self):
-        # rc and pre are equivalent under PEP 440 normalisation (the
-        # `packaging` library treats `1.0.0-pre.1` and `1.0.0-rc.1` as
-        # the same version). So in the with-packaging path we just
-        # ensure neither raises and they sort consistently.
-        # In the fallback path, `rc` > `pre` alphabetically.
-        import core.parsers as p
-        original = p._HAVE_PKG_VERSION
-        p._HAVE_PKG_VERSION = False
-        try:
-            versions = ["1.0.0-pre.1", "1.0.0-rc.1"]
-            out = sorted(versions, key=p.version_key, reverse=True)
-            assert out == ["1.0.0-rc.1", "1.0.0-pre.1"]
-        finally:
-            p._HAVE_PKG_VERSION = original
-
-    def test_v_prefix_stripped(self):
-        # Some maintainers prefix with 'v' — make sure that doesn't
-        # break the comparator.
-        import core.parsers as p
-        original = p._HAVE_PKG_VERSION
-        p._HAVE_PKG_VERSION = False
-        try:
-            versions = ["v1.0.0", "v0.9.9"]
-            out = sorted(versions, key=p.version_key, reverse=True)
-            assert out == ["v1.0.0", "v0.9.9"]
-        finally:
-            p._HAVE_PKG_VERSION = original

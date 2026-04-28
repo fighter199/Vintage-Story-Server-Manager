@@ -21,22 +21,58 @@ from datetime import datetime, timedelta
 _RE_LEVEL_ERROR = re.compile(r"\[(?:ERROR|FATAL|EXCEPTION)\]", re.I)
 _RE_LEVEL_WARN  = re.compile(r"\[WARN(?:ING)?\]", re.I)
 _RE_CHAT        = re.compile(r"\[(?:CHAT|Chat)\]|\[Server\s+Chat\]")
+# Matches:
+#   "26.4.2026 05:09:02"      — VS server's own timestamp (D.M.YYYY HH:MM:SS)
+#   "12/04/2026 11:23:45"     — slash variant
+#   "2026-04-26 05:09:02"     — ISO-style date (YYYY-MM-DD HH:MM:SS)
+#   "2026-04-26 05:09:02,486" — Python logging variant with milliseconds
+# A trailing ",NNN" ms suffix is consumed when present.
 _RE_TIMESTAMP   = re.compile(
-    r"^\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s+\d{1,2}:\d{2}:\d{2}\s*")
+    r"^\s*\d{1,4}[./-]\d{1,2}[./-]\d{1,4}\s+\d{1,2}:\d{2}:\d{2}(?:[,.]\d{1,6})?\s*")
 _RE_LOG_PREFIX  = re.compile(
     r"^\s*\[(?:Server\s+)?(?:Notification|Event|Warning|Info|Error|Chat|"
     r"Server Event|Debug|Audit)\]\s*",
     re.I)
 
-# Chat line pattern — matches "<PlayerName> message text"
-# Vintage Story chat lines look like: [Server Chat] <alice> hello world
-_RE_CHAT_MESSAGE = re.compile(
+# Chat line patterns. Vintage Story has two shapes, version-dependent:
+#
+#   1. Minecraft-style:        [Server Chat] <Alice> hello world
+#   2. Group-prefixed colon:   [Server Chat] 0 | Alice: hello world
+#
+# Format (2) is what current VS servers (1.20+) actually emit — the `0`
+# is the chat group ID. The original single-pattern parser only matched
+# format (1) (angle-bracket style), which silently broke chat-triggered
+# custom commands on real-world servers: the regex never matched, so
+# `parse_chat_message` returned (None, None) and the dispatcher was
+# never invoked. Confirmed against a captured server-output.log on
+# 2026-04-26 where `[Server Chat] 0 | Fighter199: !changechar` produced
+# zero `custom_cmd` entries in vserverman.log despite a matching rule
+# being enabled.
+#
+# We use two separate patterns so the colon form REQUIRES the leading
+# `<digits> |` group prefix. Without that requirement, lines like
+# `[Server Notification] Game Version: v1.22.0` would parse as player
+# "Version" saying "v1.22.0", because `strip_log_prefix` removes the
+# tag before the regex runs.
+_RE_CHAT_ANGLE = re.compile(
     r"<([A-Za-z0-9_\-\.]+)>\s*(.*)",
-    re.I)
+    re.I,
+)
+_RE_CHAT_COLON = re.compile(
+    r"^\s*\d+\s*\|\s*"                         # required "<digits> | " prefix
+    r"([A-Za-z0-9_\-\.]+)\s*:\s*(.*)$",        # name : message
+    re.I,
+)
 
 def strip_log_prefix(line: str) -> str:
     s = _RE_TIMESTAMP.sub("", line)
-    s = _RE_LOG_PREFIX.sub("", s)
+    # Strip a leading log-prefix tag once. If a second timestamp survives
+    # (Vintage Story sometimes emits "<wallclock> <gametime> [Server Chat]"
+    # — i.e. two timestamps before the tag), strip that too, then strip
+    # one more prefix.
+    s = _RE_LOG_PREFIX.sub("", s, count=1)
+    s = _RE_TIMESTAMP.sub("", s)
+    s = _RE_LOG_PREFIX.sub("", s, count=1)
     return s
 
 
@@ -63,22 +99,46 @@ def classify_line(line: str) -> str:
 
 
 # -----------------------------------------------------------------------
-# Chat command detection (NEW)
+# Chat command detection
 # -----------------------------------------------------------------------
 def parse_chat_message(line: str):
     """Extract (player_name, message_text) from a chat line, or (None, None).
 
-    Vintage Story chat lines appear as:
-        [Server Chat] <alice> !warp spawn
-        [Chat] <Bob> hello
-        <charlie> some text
+    Vintage Story chat lines appear in two shapes (both supported):
+
+        Angle-bracket form (older / Minecraft-style):
+            [Server Chat] <alice> !warp spawn
+            [Chat] <Bob> hello
+            <charlie> some text
+
+        Colon form (current VS 1.20+):
+            [Server Chat] 0 | Alice: !warp spawn
 
     Returns (player_name: str, message: str) or (None, None).
+
+    The colon form is ONLY recognised when the original line contains
+    a `[Chat]` / `[Server Chat]` tag. Without that gate, ordinary
+    notifications like `[Server Notification] Game Version: v1.22.0`
+    would parse as player "Version" saying "v1.22.0", because the tag
+    is stripped by `strip_log_prefix` before the regex runs.
     """
+    has_chat_tag = bool(_RE_CHAT.search(line)) or line.lstrip().startswith("<")
     stripped = strip_log_prefix(line)
-    m = _RE_CHAT_MESSAGE.search(stripped)
+
+    # Try the angle-bracket form first; safe to attempt regardless of
+    # whether a chat tag was present (the brackets are unambiguous).
+    m = _RE_CHAT_ANGLE.search(stripped)
     if m:
-        return m.group(1), m.group(2).strip()
+        return m.group(1), (m.group(2) or "").strip()
+
+    # Colon form — only attempt if the line was tagged as chat. This
+    # gate prevents matching arbitrary "Header: value" notification
+    # lines after their `[Server Notification]` tag has been stripped.
+    if has_chat_tag:
+        m = _RE_CHAT_COLON.search(stripped)
+        if m:
+            return m.group(1), (m.group(2) or "").strip()
+
     return None, None
 
 
@@ -305,53 +365,20 @@ except ImportError:
 
 
 def _parse_version_fallback(s: str) -> tuple:
-    """Parse a version string into a comparable tuple without `packaging`.
-
-    Splits the string into a "release prefix" (numeric, dot-separated)
-    and a "pre-release tail" (everything after the first hyphen, plus
-    or non-numeric segment).
-
-    Returns:
-        (release_components: tuple[int, ...],
-         is_release: int,         # 1 for clean release, 0 for pre-release
-         prerelease_components: tuple)
-
-    With this shape, `(0, 6, 0)` sorts above `(0, 6, 0)` + prerelease
-    because the second element (`is_release`) breaks the tie in favour
-    of the clean release. Among prereleases, the prerelease_components
-    tuple provides the next ordering level.
-
-    Examples:
-        "0.6.0"        -> ((0, 6, 0), 1, ())
-        "0.6.0-rc.2"   -> ((0, 6, 0), 0, ("rc", 2))
-        "0.6.0-rc.1"   -> ((0, 6, 0), 0, ("rc", 1))
-        "0.6.0-pre.1"  -> ((0, 6, 0), 0, ("pre", 1))
-        "0.5.7"        -> ((0, 5, 7), 1, ())
-    """
-    # Split off the prerelease/build tail at the first non-numeric/dot.
-    # We allow the leading 'v' some maintainers use.
+    """Parse a version string into a comparable tuple without `packaging`."""
     s = s.lstrip("vV")
-    # Find the boundary: the first occurrence of '-', '+', or any
-    # alphabetical character that isn't part of a numeric segment.
     m = re.match(r"^([0-9]+(?:\.[0-9]+)*)(.*)$", s)
     if not m:
-        # Couldn't even parse a numeric prefix — treat as ((), 0, (s,))
         return ((), 0, (s,))
     head, tail = m.group(1), m.group(2)
     release = tuple(int(x) for x in head.split("."))
     if not tail:
-        return (release, 1, ())  # clean release
-    # Tail is something like "-rc.2", "-pre.1", "+build5", etc.
-    # Strip leading separator and split on dots, hyphens, plus signs.
+        return (release, 1, ())
     tail_clean = tail.lstrip("-+.")
     pre_parts: list = []
     for part in re.split(r"[\.\-+]", tail_clean):
         if not part:
             continue
-        # Try int; fall back to lowercase string. We compare strings
-        # naturally (alphabetical), with "alpha" < "beta" < "rc" — which
-        # happens to match how PEP 440 ranks them too. Mixed types in
-        # tuples don't compare in Python 3, so wrap each in (kind, val).
         if part.isdigit():
             pre_parts.append((1, int(part)))
         else:
@@ -360,25 +387,7 @@ def _parse_version_fallback(s: str) -> tuple:
 
 
 def version_key(s: str) -> tuple:
-    """Return a tuple suitable for `sorted(..., key=version_key, reverse=True)`.
-
-    The tuple is comparable in the natural sense — i.e. for two version
-    strings A and B, `version_key(A) > version_key(B)` iff A is strictly
-    newer than B. Falls back to a (release, is_release, prerelease)
-    triple when `packaging` isn't installed; that fallback handles
-    pre-release semantics correctly (a clean `0.6.0` sorts above its
-    `0.6.0-rc.2` and `0.6.0-pre.1` siblings).
-
-    Empty / None / unparseable values sort *lowest* (oldest), so they
-    end up at the bottom of a `reverse=True` sort.
-
-    The returned shape is always `(tier, payload)`:
-      tier 2 = parsed by `packaging`           (newest tier)
-      tier 1 = component-triple fallback
-      tier 0 = unparseable / empty             (oldest tier)
-    Higher tier always sorts higher; within a tier the payload is
-    self-consistent (`Version` vs `Version`, or tuple vs tuple).
-    """
+    """Return a tuple suitable for sorted(..., key=version_key, reverse=True)."""
     if not s:
         return (0, ())
     if _HAVE_PKG_VERSION:

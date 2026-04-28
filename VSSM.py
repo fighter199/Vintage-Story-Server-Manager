@@ -77,6 +77,8 @@ from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                          Sparkline, ScrollableFrame, themed_frame,
                          panel_header, collapsible_section, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
+from ui.tab_autorun import AutorunTab
+from core.autorun import AutorunScheduler
 from mods.inspector import LocalModInspector
 from mods.moddb import ModDbClient
 from backup import BackupManager
@@ -317,6 +319,20 @@ class ServerManagerApp(tk.Tk):
         self._cmd_dispatcher = ChatCommandDispatcher(
             lambda: load_custom_commands(self._settings))
 
+        # Autorun scheduler — fires console commands at fixed intervals
+        # while the server is running. The rule list is read fresh on
+        # every tick from settings (via the AutorunTab provider once
+        # the tab exists), so live edits in the UI take effect on the
+        # very next tick without re-attaching anything.
+        self._autorun_scheduler = AutorunScheduler(
+            rules_provider = self._autorun_rules_provider,
+            send           = self._autorun_send,
+            player_count   = self._autorun_player_count,
+            audit          = lambda a: self.after_idle(
+                self._autorun_record_audit, a),
+        )
+        self._autorun_tab: "AutorunTab | None" = None
+
         # Tk variables
         self.server_path_var          = tk.StringVar()
         self.command_var              = tk.StringVar()
@@ -369,6 +385,7 @@ class ServerManagerApp(tk.Tk):
         self._glow_title()
         self._tick_uptime()
         self._reschedule_player_count_poll()
+        self._tick_autorun()  # 1Hz scheduler tick (no-op while stopped)
         # Scale shortcuts
         self.bind_all("<Control-equal>",      lambda _: self._bump_ui_scale(+0.1))
         self.bind_all("<Control-plus>",       lambda _: self._bump_ui_scale(+0.1))
@@ -845,6 +862,11 @@ class ServerManagerApp(tk.Tk):
         custom_cmds_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
         self.notebook.add(custom_cmds_frame, text="CUSTOM CMDS")
         self._custom_cmds_tab = CustomCommandsTab(custom_cmds_frame, self)
+
+        # NEW: Autorun tab
+        autorun_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
+        self.notebook.add(autorun_frame, text="AUTORUN")
+        self._autorun_tab = AutorunTab(autorun_frame, self)
         # Route every dispatch (fired or skipped) into the tab's audit
         # log. Use after_idle so audit updates always happen on the Tk
         # main thread, even when dispatch is invoked from _process_queue.
@@ -1586,14 +1608,30 @@ class ServerManagerApp(tk.Tk):
             self.append_console(
                 f"WARNING: Port {port} is already in use. Server may fail to bind.",
                 "warn")
+        # On Windows, VintagestoryServer.exe inherits the parent's
+        # console by default. When VS detects an attached console it
+        # reads commands from there directly, *not* from our piped
+        # stdin — so /stop, /list, etc. silently disappear into the
+        # void. We work around it by detaching the child into its own
+        # process group AND suppressing the per-child console window;
+        # with no console attached, VS falls back to reading stdin,
+        # which is exactly the pipe we own.
+        popen_kwargs = dict(
+            cwd=server_dir,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        )
+        if sys.platform.startswith("win"):
+            # CREATE_NEW_PROCESS_GROUP (0x00000200) detaches from our
+            #   console group so Ctrl+C in our window can't propagate
+            #   and instakill the server.
+            # CREATE_NO_WINDOW (0x08000000) suppresses the child's
+            #   console; its stdout/stderr is already piped to us.
+            popen_kwargs["creationflags"] = 0x00000200 | 0x08000000
         try:
-            self.server_process = subprocess.Popen(
-                [exe], cwd=server_dir,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                bufsize=0,
-            )
+            self.server_process = subprocess.Popen([exe], **popen_kwargs)
         except Exception as e:
             self._notify(f"Failed to start: {e}", level="error")
             self.append_console(f"Start failed: {e}", "error")
@@ -1605,6 +1643,12 @@ class ServerManagerApp(tk.Tk):
         self._set_status("ONLINE", dot="online")
         self.append_console(f"Server started: {exe}", "success")
         LOG.info("Server started: %s", exe)
+        # Arm the autorun scheduler at server-start time so all
+        # interval deadlines are anchored to a fresh wall clock.
+        try:
+            self._autorun_scheduler.start()
+        except Exception:
+            LOG.exception("autorun scheduler start failed")
         reader = threading.Thread(target=self._read_output, daemon=True)
         reader.start()
         self.after(100, self._process_queue)
@@ -1677,6 +1721,10 @@ class ServerManagerApp(tk.Tk):
         self._player_roles.clear()
         self.server_process = None
         self.cancel_autosave_job()
+        try:
+            self._autorun_scheduler.stop()
+        except Exception:
+            pass
         self._cancel_cron_schedule()
         cbs = self._shutdown_callbacks[:]
         self._shutdown_callbacks.clear()
@@ -1874,17 +1922,33 @@ class ServerManagerApp(tk.Tk):
         return len(self._crash_times) >= self.CRASH_LIMIT
 
     def _send_internal_command(self, cmd: str) -> bool:
+        """Write a single command line to the server's stdin pipe.
+
+        Vintage Story's CLI parses one command per line. We use CRLF on
+        Windows because some VS builds detect the host platform and
+        expect the platform-native line ending; the server's reader on
+        Linux/macOS accepts both LF and CRLF, so CRLF is safe everywhere.
+        """
         proc = self.server_process
         if not proc or proc.poll() is not None:
+            LOG.debug("_send_internal_command: no live process (cmd=%r)", cmd)
             return False
+        if not proc.stdin or proc.stdin.closed:
+            LOG.warning("_send_internal_command: stdin closed (cmd=%r)", cmd)
+            return False
+        line_ending = b"\r\n" if sys.platform.startswith("win") else b"\n"
+        payload = cmd.encode("utf-8", errors="replace") + line_ending
         try:
-            proc.stdin.write((cmd + "\n").encode("utf-8"))
+            proc.stdin.write(payload)
             proc.stdin.flush()
-            LOG.debug("Sent: %r", cmd)
-            return True
+        except (BrokenPipeError, OSError) as e:
+            LOG.error("_send_internal_command pipe error: %s (cmd=%r)", e, cmd)
+            return False
         except Exception as e:
             LOG.error("_send_internal_command failed: %s (cmd=%r)", e, cmd)
             return False
+        LOG.debug("Sent: %r (%d bytes)", cmd, len(payload))
+        return True
 
     # ------------------------------------------------------------------
     # Console
@@ -2428,6 +2492,69 @@ class ServerManagerApp(tk.Tk):
             self.mem_spark.push(mem_frac)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Autorun integration
+    # ------------------------------------------------------------------
+    def _autorun_rules_provider(self):
+        """Provider used by AutorunScheduler. Reads the live rule list
+        from the active profile every tick so UI edits take effect
+        immediately."""
+        try:
+            from core.settings import load_autorun_rules
+            return load_autorun_rules(self._settings)
+        except Exception:
+            return []
+
+    def _autorun_send(self, cmd: str) -> None:
+        """Send callback for AutorunScheduler. Echoes into the local
+        console for visibility, and only writes to stdin while the
+        server is actually running."""
+        if not self.is_running:
+            return
+        self._send_internal_command(cmd)
+        try:
+            self.append_console(f"[autorun] → {cmd}", "system")
+        except Exception:
+            pass
+        LOG.info("autorun  %s", cmd)
+
+    def _autorun_player_count(self) -> int:
+        try:
+            return len(self._players or [])
+        except Exception:
+            return 0
+
+    def _autorun_record_audit(self, audit) -> None:
+        """Forward a scheduler decision to the tab, if it's been built."""
+        if self._autorun_tab is not None:
+            try:
+                self._autorun_tab.record_audit(audit)
+            except Exception:
+                LOG.exception("autorun audit record failed")
+
+    def _autorun_rules_changed(self) -> None:
+        """Hook for the tab to call after the user saves a rule.
+        The scheduler reads the provider every tick, so there's no
+        cache to invalidate — but if a brand-new rule has run_on_start
+        set, we'd miss it (start() already ran). Best-effort: if the
+        server is up and the new rule's run_on_start flag is set,
+        wait until the next tick which will arm it normally."""
+        # Currently a no-op; reserved as a host-side hook so the tab
+        # has a clean place to call into without poking scheduler
+        # internals. Live edits already work via the per-tick provider.
+        return
+
+    def _tick_autorun(self) -> None:
+        """1Hz tick: ask the scheduler to process any due rules."""
+        try:
+            if self.is_running:
+                self._autorun_scheduler.tick()
+        except Exception:
+            LOG.exception("autorun tick failed")
+        # Always reschedule, even when stopped, so we pick up the
+        # next start_server transition without a separate hook.
+        self.after(1000, self._tick_autorun)
 
     # ------------------------------------------------------------------
     # Window close
