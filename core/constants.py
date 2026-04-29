@@ -10,7 +10,7 @@ import sys
 
 APP_NAME    = "VSSM"
 APP_VERSION = "3.1"
-SETTINGS_SCHEMA_VERSION = 6
+SETTINGS_SCHEMA_VERSION = 7
 
 # -----------------------------------------------------------------------
 # Directory helpers

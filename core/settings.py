@@ -147,6 +147,29 @@ def save_autorun_rules(settings: dict, rules: list[dict]) -> None:
     profile = get_active_profile(settings)
     profile["autorun_rules"] = rules
 
+
+
+# -----------------------------------------------------------------------
+# Player playtime totals (per-profile, like custom_commands and autorun)
+# -----------------------------------------------------------------------
+def load_player_totals(settings: dict) -> dict:
+    """Return the persisted player-playtime-totals dict for the active
+    profile. Mutating the returned dict in place mutates the settings
+    blob — callers are expected to follow up with save_settings to
+    persist."""
+    profile = get_active_profile(settings)
+    totals = profile.get("player_totals")
+    if not isinstance(totals, dict):
+        totals = {}
+        profile["player_totals"] = totals
+    return totals
+
+
+def save_player_totals(settings: dict, totals: dict) -> None:
+    """Replace the persisted totals dict for the active profile."""
+    profile = get_active_profile(settings)
+    profile["player_totals"] = dict(totals or {})
+
 # -----------------------------------------------------------------------
 # Schema migration
 # -----------------------------------------------------------------------
@@ -161,7 +184,8 @@ def _default_settings() -> dict:
         "crash_limit":       3,
         "crash_window_secs": 600,
         "log_level":         "DEBUG",
-        "player_count_poll_secs": 30,  # 0 = disabled; otherwise seconds between
+        "player_count_poll_secs": 30,  # 0 = disabled
+        "header_collapsed":   False,  # 0 = disabled; otherwise seconds between
                                        # automatic /list clients pings while
                                        # the server is running.
     }
@@ -223,6 +247,16 @@ def _migrate(data: dict, path: str) -> dict:
                 profile.setdefault("autorun_rules", [])
         LOG.info("Migrated settings schema 5 → 6 "
                  "(added autorun_rules per profile)")
+
+    # v6 → v7: each profile gets its own player_totals dict
+    # (player name → cumulative seconds played across all sessions)
+    if schema < 7:
+        profiles = data.setdefault("profiles", {})
+        for name, profile in profiles.items():
+            if isinstance(profile, dict):
+                profile.setdefault("player_totals", {})
+        LOG.info("Migrated settings schema 6 → 7 "
+                 "(added player_totals per profile)")
 
     data["_schema_version"] = SETTINGS_SCHEMA_VERSION
     return _heal(data)

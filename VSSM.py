@@ -77,6 +77,8 @@ from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                          Sparkline, ScrollableFrame, themed_frame,
                          panel_header, collapsible_section, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
+from core.player_timers import PlayerTimers, fmt_duration
+from core.settings import load_player_totals
 from ui.tab_autorun import AutorunTab
 from core.autorun import AutorunScheduler
 from mods.inspector import LocalModInspector
@@ -293,6 +295,18 @@ class ServerManagerApp(tk.Tk):
         # role cache: player_name -> role string
         self._player_roles: dict   = {}
 
+        # Player timer engine — session + lifetime playtime tracking.
+        # Lazy-resolves the totals dict on every read so it always
+        # points at the active profile's slot, even after a profile
+        # switch. Mutating that dict mutates settings in place.
+        self._player_timers = PlayerTimers(
+            totals_provider=lambda: load_player_totals(self._settings))
+        # Per-row label refs for in-place 1Hz updates without rebuild.
+        # Maps player name → (session_label, total_label).
+        self._player_timer_labels: dict = {}
+        # Periodic-flush job id (cancelled on close)
+        self._timer_flush_job_id = None
+
         # Commands reference
         self.commands_data = load_commands_data()
         self._cmd_index        = {}
@@ -385,6 +399,8 @@ class ServerManagerApp(tk.Tk):
         self._glow_title()
         self._tick_uptime()
         self._reschedule_player_count_poll()
+        self._tick_player_timers()    # 1Hz label refresh
+        self._schedule_timer_flush()  # 60s persistence flush
         self._tick_autorun()  # 1Hz scheduler tick (no-op while stopped)
         # Scale shortcuts
         self.bind_all("<Control-equal>",      lambda _: self._bump_ui_scale(+0.1))
@@ -538,48 +554,36 @@ class ServerManagerApp(tk.Tk):
         root_pad = tk.Frame(self, bg=Theme.BG_DARK)
         root_pad.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
 
-        # Header
-        header = tk.Frame(root_pad, bg=Theme.BG_DARK)
-        header.pack(fill=tk.X, pady=(5, 10))
-        header.columnconfigure(0, weight=1, uniform="hdr")
-        header.columnconfigure(1, weight=2, uniform="hdr")
-        header.columnconfigure(2, weight=1, uniform="hdr")
+        # Header (collapsible). The toolbar strip is always visible —
+        # it carries the toggle button, the inline title, and a small
+        # warning indicator. The fancy 3-column layout (full title,
+        # version subtitle, hotkeys cheat sheet, full setup warning)
+        # lives in `self._header_body`, which can be hidden via
+        # pack_forget without disturbing any other layout.
+        self._header_collapsed = bool(
+            self._settings.get("header_collapsed", False))
+        # `setup_warning_var` is created here (before the body is built)
+        # because the toolbar's status indicator binds to the same var.
+        self.setup_warning_var = tk.StringVar(value="")
 
-        left_col = tk.Frame(header, bg=Theme.BG_DARK)
-        left_col.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 8))
-        self.setup_warning_var   = tk.StringVar(value="")
-        self.setup_warning_label = tk.Label(
-            left_col, textvariable=self.setup_warning_var,
-            fg=Theme.RED, bg=Theme.BG_DARK,
-            font=self.F_SMALL, justify=tk.LEFT, anchor="nw", wraplength=320)
-        self.setup_warning_label.pack(anchor="nw")
+        self._header_toolbar = tk.Frame(root_pad, bg=Theme.BG_DARK)
+        self._header_toolbar.pack(fill=tk.X, pady=(2, 0))
+        self._build_header_toolbar(self._header_toolbar)
 
-        center_col = tk.Frame(header, bg=Theme.BG_DARK)
-        center_col.grid(row=0, column=1, rowspan=2, sticky="n")
-        self.title_label = tk.Label(
-            center_col, text="⛏  VINTAGE STORY SERVER MANAGER  ⛏",
-            fg=Theme.AMBER_GLOW, bg=Theme.BG_DARK, font=self.F_TITLE)
-        self.title_label.pack()
-        tk.Label(center_col, text=f"[ VSERVERMAN v{APP_VERSION} ]",
-                 fg=Theme.AMBER_DIM, bg=Theme.BG_DARK,
-                 font=self.F_SUB).pack(pady=(2, 0))
+        self._header_body = tk.Frame(root_pad, bg=Theme.BG_DARK)
+        self._build_header_body(self._header_body)
 
-        right_col = tk.Frame(header, bg=Theme.BG_DARK)
-        right_col.grid(row=0, column=2, rowspan=2, sticky="ne", padx=(8, 0))
-        tk.Label(right_col, text="HOTKEYS", fg=Theme.AMBER_GLOW,
-                 bg=Theme.BG_DARK, font=self.F_SMALL).pack(anchor="ne")
-        tk.Label(right_col,
-                 text="Ctrl+L        clear console\n"
-                      "Ctrl+Enter    send command\n"
-                      "↑ / ↓         history\n"
-                      "Right-click   copy / player actions\n"
-                      "Ctrl + =      larger UI\n"
-                      "Ctrl + −      smaller UI\n"
-                      "Ctrl + 0      reset UI scale",
-                 fg=Theme.AMBER_DIM, bg=Theme.BG_DARK,
-                 font=self.F_SMALL, justify=tk.RIGHT).pack(anchor="ne", pady=(2, 0))
-
-        tk.Frame(root_pad, bg=Theme.BORDER, height=2).pack(fill=tk.X, pady=(0, 12))
+        # Pack body unless we're starting collapsed. The horizontal
+        # separator below it is part of the body so it disappears too.
+        if not self._header_collapsed:
+            self._header_body.pack(fill=tk.X, pady=(2, 8))
+        else:
+            # Even when collapsed, keep a thin separator so the toolbar
+            # doesn't visually merge with the exe panel below.
+            pass
+        self._header_separator = tk.Frame(
+            root_pad, bg=Theme.BORDER, height=1)
+        self._header_separator.pack(fill=tk.X, pady=(0, 8))
 
         # Exe selector
         exe_panel = themed_frame(root_pad)
@@ -663,6 +667,134 @@ class ServerManagerApp(tk.Tk):
         self.mods_folder_var.trace_add('write', lambda *_: self._recompute_setup_warning())
         self._recompute_setup_warning()
 
+    # ------------------------------------------------------------------
+    # Collapsible top header
+    # ------------------------------------------------------------------
+    def _build_header_toolbar(self, parent):
+        """The strip that's always visible at the very top of the
+        window. Carries the collapse toggle, the inline title, and a
+        compact setup-warning indicator."""
+        # Toggle button (▾ when expanded, ▸ when collapsed). Bound to
+        # _toggle_header_collapsed so a click flips and persists state.
+        self._header_toggle_btn = tk.Label(
+            parent,
+            text=("▸" if self._header_collapsed else "▾"),
+            fg=Theme.AMBER_GLOW, bg=Theme.BG_DARK,
+            font=self.F_HDR, cursor="hand2",
+            padx=8, pady=2,
+        )
+        self._header_toggle_btn.pack(side=tk.LEFT)
+        self._header_toggle_btn.bind(
+            "<Button-1>", lambda _e: self._toggle_header_collapsed())
+
+        # Inline compact title. Whole-line clickable so users don't
+        # have to aim at the small ▾/▸ glyph.
+        title = tk.Label(
+            parent,
+            text=f"VSSM v{APP_VERSION} — Vintage Story Server Manager",
+            fg=Theme.AMBER, bg=Theme.BG_DARK,
+            font=self.F_HDR, cursor="hand2",
+            padx=4, pady=2,
+        )
+        title.pack(side=tk.LEFT, padx=(0, 8))
+        title.bind(
+            "<Button-1>", lambda _e: self._toggle_header_collapsed())
+
+        # Compact warning indicator on the right. Hidden when there
+        # are no setup warnings; shows a single-line summary like
+        # "⚠ 2 setup issues" when there are. Clicking it expands the
+        # header so the user can read the full warning text.
+        self._header_warn_label = tk.Label(
+            parent, text="", fg=Theme.RED, bg=Theme.BG_DARK,
+            font=self.F_SMALL, cursor="hand2", padx=8,
+        )
+        self._header_warn_label.pack(side=tk.RIGHT)
+        self._header_warn_label.bind(
+            "<Button-1>",
+            lambda _e: self._set_header_collapsed(False))
+
+    def _build_header_body(self, parent):
+        """The original 3-column header layout — title, version,
+        hotkeys cheat sheet, full setup-warning text. Lives inside
+        a frame that pack_forget() can hide."""
+        header = tk.Frame(parent, bg=Theme.BG_DARK)
+        header.pack(fill=tk.X)
+        header.columnconfigure(0, weight=1, uniform="hdr")
+        header.columnconfigure(1, weight=2, uniform="hdr")
+        header.columnconfigure(2, weight=1, uniform="hdr")
+
+        left_col = tk.Frame(header, bg=Theme.BG_DARK)
+        left_col.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 8))
+        # setup_warning_var was created in _build_ui (before this body
+        # was built) so the toolbar's compact indicator can bind to it.
+        self.setup_warning_label = tk.Label(
+            left_col, textvariable=self.setup_warning_var,
+            fg=Theme.RED, bg=Theme.BG_DARK,
+            font=self.F_SMALL, justify=tk.LEFT, anchor="nw", wraplength=320)
+        self.setup_warning_label.pack(anchor="nw")
+
+        center_col = tk.Frame(header, bg=Theme.BG_DARK)
+        center_col.grid(row=0, column=1, rowspan=2, sticky="n")
+        self.title_label = tk.Label(
+            center_col, text="⛏  VINTAGE STORY SERVER MANAGER  ⛏",
+            fg=Theme.AMBER_GLOW, bg=Theme.BG_DARK, font=self.F_TITLE)
+        self.title_label.pack()
+        tk.Label(center_col, text=f"[ VSERVERMAN v{APP_VERSION} ]",
+                 fg=Theme.AMBER_DIM, bg=Theme.BG_DARK,
+                 font=self.F_SUB).pack(pady=(2, 0))
+
+        right_col = tk.Frame(header, bg=Theme.BG_DARK)
+        right_col.grid(row=0, column=2, rowspan=2, sticky="ne", padx=(8, 0))
+        tk.Label(right_col, text="HOTKEYS", fg=Theme.AMBER_GLOW,
+                 bg=Theme.BG_DARK, font=self.F_SMALL).pack(anchor="ne")
+        tk.Label(right_col,
+                 text="Ctrl+L        clear console\n"
+                      "Ctrl+Enter    send command\n"
+                      "↑ / ↓         history\n"
+                      "Right-click   copy / player actions\n"
+                      "Ctrl + =      larger UI\n"
+                      "Ctrl + −      smaller UI\n"
+                      "Ctrl + 0      reset UI scale",
+                 fg=Theme.AMBER_DIM, bg=Theme.BG_DARK,
+                 font=self.F_SMALL, justify=tk.RIGHT).pack(anchor="ne", pady=(2, 0))
+
+    def _toggle_header_collapsed(self):
+        """Flip the header's collapsed state and persist."""
+        self._set_header_collapsed(not self._header_collapsed)
+
+    def _set_header_collapsed(self, collapsed: bool):
+        """Apply a specific collapsed state. Idempotent — re-applying
+        the same state is a cheap no-op."""
+        collapsed = bool(collapsed)
+        if collapsed == self._header_collapsed:
+            return
+        self._header_collapsed = collapsed
+        # Update the toggle glyph
+        try:
+            self._header_toggle_btn.configure(
+                text=("▸" if collapsed else "▾"))
+        except (AttributeError, tk.TclError):
+            pass
+        # Show or hide the body.
+        try:
+            if collapsed:
+                self._header_body.pack_forget()
+            else:
+                # Re-pack just above the separator. Using `before=` keeps
+                # the relative order stable across multiple toggles.
+                self._header_body.pack(
+                    fill=tk.X, pady=(2, 8),
+                    before=self._header_separator)
+        except (AttributeError, tk.TclError):
+            pass
+        # Persist
+        try:
+            self._settings["header_collapsed"] = collapsed
+            from core.settings import save_settings
+            save_settings(self._settings)
+        except Exception:
+            LOG.exception("save header_collapsed failed")
+
     def _recompute_setup_warning(self):
         if not hasattr(self, "setup_warning_var"):
             return
@@ -677,7 +809,35 @@ class ServerManagerApp(tk.Tk):
             issues.append("⚠ MODS FOLDER NOT SET")
         elif not os.path.isdir(mods):
             issues.append("⚠ MODS FOLDER INVALID")
-        self.setup_warning_var.set("\n".join(issues))
+        new_text = "\n".join(issues)
+        prev_text = ""
+        try:
+            prev_text = self.setup_warning_var.get() or ""
+        except Exception:
+            pass
+        self.setup_warning_var.set(new_text)
+
+        # Update the toolbar's compact indicator and auto-expand the
+        # header when a NEW warning appears (so the user can't miss an
+        # "executable not set" notice while the header is collapsed).
+        # We only auto-expand when the warning text changed from empty
+        # to non-empty — collapsing-after-acknowledging is respected.
+        try:
+            warn_lbl = getattr(self, "_header_warn_label", None)
+            if warn_lbl is not None:
+                if issues:
+                    n = len(issues)
+                    warn_lbl.configure(
+                        text=f"⚠ {n} setup issue{'s' if n != 1 else ''}")
+                else:
+                    warn_lbl.configure(text="")
+        except (AttributeError, tk.TclError):
+            pass
+        if new_text and not prev_text:
+            try:
+                self._set_header_collapsed(False)
+            except Exception:
+                pass
 
     def _install_wrapping_row(self, container, widgets, spacing=8, pady_between=4):
         container.pack_propagate(False)
@@ -976,6 +1136,31 @@ class ServerManagerApp(tk.Tk):
                      fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
                      font=self.F_SMALL).pack(side=tk.LEFT, padx=(4, 0))
 
+        # Playtime labels — pinned to the RIGHT edge of the row. Total
+        # is packed first so it appears outside (further-right) of the
+        # session label, matching the visual order in the comments.
+        # Both labels are stored on self._player_timer_labels so the
+        # 1Hz tick can update them in place without rebuilding the row.
+        total_lbl = tk.Label(
+            row, text="Σ 0:00:00",
+            fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
+            font=self.F_SMALL, cursor="hand2")
+        total_lbl.pack(side=tk.RIGHT, padx=(6, 0))
+        session_lbl = tk.Label(
+            row, text="🕐 0:00:00",
+            fg=Theme.AMBER, bg=Theme.BG_PANEL,
+            font=self.F_SMALL)
+        session_lbl.pack(side=tk.RIGHT, padx=(6, 0))
+        self._player_timer_labels[name] = (session_lbl, total_lbl)
+        # Tooltip-ish: hovering or right-click on total reveals options
+        # via the existing player popup, so we only need a one-time
+        # update here for the initial values.
+        try:
+            session_lbl.configure(text=f"🕐 {fmt_duration(self._player_timers.session_secs(name))}")
+            total_lbl.configure(text=f"Σ {fmt_duration(self._player_timers.total_secs(name))}")
+        except Exception:
+            pass
+
         for w in (badge, name_lbl):
             w.bind("<Button-1>", _copy_name)
 
@@ -984,6 +1169,64 @@ class ServerManagerApp(tk.Tk):
         for w in (row, badge, name_lbl):
             w.bind("<Button-3>", _popup)
             w.bind("<Button-2>", _popup)
+
+    # ------------------------------------------------------------------
+    # Player playtime tick + persistence
+    # ------------------------------------------------------------------
+    def _tick_player_timers(self):
+        """1Hz tick: refresh the session/total labels on each row in
+        place. We update the LABELS rather than re-rendering the row
+        so there's no flicker and no destroy/recreate cost when many
+        players are online."""
+        try:
+            for name, (sess_lbl, total_lbl) in list(
+                    self._player_timer_labels.items()):
+                if name not in self._players:
+                    continue
+                try:
+                    sess_lbl.configure(
+                        text=f"🕐 {fmt_duration(self._player_timers.session_secs(name))}")
+                    total_lbl.configure(
+                        text=f"Σ {fmt_duration(self._player_timers.total_secs(name))}")
+                except tk.TclError:
+                    # Row was destroyed mid-tick (e.g. profile switch).
+                    self._player_timer_labels.pop(name, None)
+        except Exception:
+            LOG.exception("player timer tick failed")
+        self.after(1000, self._tick_player_timers)
+
+    def _schedule_timer_flush(self):
+        """Schedule the next periodic flush (every 60s).
+        Flushing accumulates each active session's elapsed time into
+        the persisted totals dict so a crash loses at most ~60s."""
+        if self._timer_flush_job_id is not None:
+            try:
+                self.after_cancel(self._timer_flush_job_id)
+            except Exception:
+                pass
+        self._timer_flush_job_id = self.after(
+            60_000, self._timer_flush_tick)
+
+    def _timer_flush_tick(self):
+        self._timer_flush_job_id = None
+        try:
+            if self._player_timers.flush() > 0:
+                self._persist_player_totals()
+        except Exception:
+            LOG.exception("player timer flush failed")
+        # Always reschedule, even when no players are online — the
+        # cost is one no-op call per minute.
+        self._schedule_timer_flush()
+
+    def _persist_player_totals(self):
+        """Write the in-memory totals dict back to settings on disk.
+        The dict itself is owned by settings (mutated in place by the
+        timer engine), so all we need to do is save_settings."""
+        try:
+            from core.settings import save_settings
+            save_settings(self._settings)
+        except Exception:
+            LOG.exception("save player totals failed")
 
     def _show_player_menu(self, event, player_name: str):
         if not self.is_running:
@@ -1714,6 +1957,13 @@ class ServerManagerApp(tk.Tk):
         self._update_buttons_running(False)
         self._set_status("OFFLINE", dot="off")
         self.append_console("Server stopped.", "system")
+        # End every active session before we forget the player list,
+        # so the just-finished sessions land in totals.
+        try:
+            self._player_timers.reset_all()
+            self._persist_player_totals()
+        except Exception:
+            LOG.exception("player timer flush on stop failed")
         self._players = []
         self._rerender_players()
         self._operators.clear()
@@ -2022,6 +2272,19 @@ class ServerManagerApp(tk.Tk):
         new_set = list(dict.fromkeys(names))
         if new_set == self._players:
             return
+        # Diff against the current list to feed implicit join/leave
+        # events to the timer engine. Without this, /list clients
+        # responses (which is how we detect players who were already
+        # connected when VSSM started) wouldn't kick the session
+        # timers into life.
+        before = set(self._players)
+        after  = set(new_set)
+        for joined in after - before:
+            self._player_timers.record_join(joined)
+        for left in before - after:
+            self._player_timers.record_leave(left)
+        if before != after:
+            self._persist_player_totals()
         self._players = new_set
         self._rerender_players()
 
@@ -2029,6 +2292,7 @@ class ServerManagerApp(tk.Tk):
         if name in self._players:
             return
         self._players.append(name)
+        self._player_timers.record_join(name)
         self._rerender_players()
         def _fire(n=name):
             if self._send_internal_command(f"/player {n} role"):
@@ -2039,6 +2303,12 @@ class ServerManagerApp(tk.Tk):
         if name not in self._players:
             return
         self._players.remove(name)
+        self._player_timers.record_leave(name)
+        # Persist immediately — leaves are exactly the moments where
+        # losing data hurts most (the just-completed session is now
+        # in the totals dict and a crash before the next 60s flush
+        # would erase it).
+        self._persist_player_totals()
         self._operators.discard(name)
         self._player_roles.pop(name, None)
         self._rerender_players()
@@ -2560,6 +2830,13 @@ class ServerManagerApp(tk.Tk):
     # Window close
     # ------------------------------------------------------------------
     def on_closing(self):
+        # Final timer flush — even if the server is still running,
+        # capture the in-flight session time before we exit.
+        try:
+            self._player_timers.flush()
+            self._persist_player_totals()
+        except Exception:
+            pass
         if self.is_running:
             if not messagebox.askokcancel(
                     "Quit",
