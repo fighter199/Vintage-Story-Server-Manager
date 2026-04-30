@@ -28,7 +28,12 @@ _RE_CHAT        = re.compile(r"\[(?:CHAT|Chat)\]|\[Server\s+Chat\]")
 #   "2026-04-26 05:09:02,486" — Python logging variant with milliseconds
 # A trailing ",NNN" ms suffix is consumed when present.
 _RE_TIMESTAMP   = re.compile(
-    r"^\s*\d{1,4}[./-]\d{1,2}[./-]\d{1,4}\s+\d{1,2}:\d{2}:\d{2}(?:[,.]\d{1,6})?\s*")
+    r"^\s*"
+    r"(?:\[\d{1,2}:\d{2}:\d{2}\]\s+)?"          # optional [HH:MM:SS] console prefix
+    r"\d{1,4}[./-]\d{1,2}[./-]\d{1,4}\s+\d{1,2}:\d{2}:\d{2}(?:[,.]\d{1,6})?\s*")
+# Console-only timestamp prefix, used on lines that don't have a full
+# wall-clock date (e.g. the per-player rows of /list clients output).
+_RE_CONSOLE_TIME = re.compile(r"^\s*\[\d{1,2}:\d{2}:\d{2}\]\s+")
 _RE_LOG_PREFIX  = re.compile(
     r"^\s*\[(?:Server\s+)?(?:Notification|Event|Warning|Info|Error|Chat|"
     r"Server Event|Debug|Audit)\]\s*",
@@ -65,13 +70,22 @@ _RE_CHAT_COLON = re.compile(
 )
 
 def strip_log_prefix(line: str) -> str:
-    s = _RE_TIMESTAMP.sub("", line)
-    # Strip a leading log-prefix tag once. If a second timestamp survives
-    # (Vintage Story sometimes emits "<wallclock> <gametime> [Server Chat]"
-    # — i.e. two timestamps before the tag), strip that too, then strip
-    # one more prefix.
+    """Peel timestamps + log tags off the start of a line.
+
+    Handles every shape we've seen in Vintage Story logs, including:
+      "12.04.2026 11:23:45 [Server Notification] hello"
+      "[23:39:39] 29.4.2026 23:39:39 [Server Notification] List of online Players"
+      "[23:39:39] Playing [2] Fighter199 [::ffff:...]:45893 (50ms) (200s inactive)"
+      "2026-04-26 05:09:02,486 26.4.2026 05:09:02 [Server Chat] hi"
+    """
+    s = line
+    # Up to TWO timestamps + log tags can stack at the start (Python
+    # logger's wallclock + VS's own gametime). Peel them in order.
+    s = _RE_TIMESTAMP.sub("", s, count=1)
+    s = _RE_CONSOLE_TIME.sub("", s, count=1)
     s = _RE_LOG_PREFIX.sub("", s, count=1)
-    s = _RE_TIMESTAMP.sub("", s)
+    s = _RE_TIMESTAMP.sub("", s, count=1)
+    s = _RE_CONSOLE_TIME.sub("", s, count=1)
     s = _RE_LOG_PREFIX.sub("", s, count=1)
     return s
 
@@ -90,8 +104,10 @@ def classify_line(line: str) -> str:
     if ("[server event]" in low or "[audit]" in low) \
             or "joined" in low or " joins" in low \
             or "left the game" in low \
-            or re.search(r"player\s+\S+\s+left", low):
-        if "joined" in low or "joins" in low or "left" in low:
+            or re.search(r"player\s+\S+\s+left", low) \
+            or re.search(r"player\s+\S+\s+got\s+removed", low):
+        if ("joined" in low or "joins" in low or "left" in low
+                or "got removed" in low):
             return "player"
     if "server ready" in low or " started" in low or "saved" in low:
         return "success"
@@ -160,7 +176,24 @@ _RE_LEAVE_PATTERNS = [
     re.compile(r"^\s*Client\s+([A-Za-z][A-Za-z0-9_\-\.]*)\s+disconnected", re.I),
     re.compile(r"^\s*([A-Za-z0-9_\-\.]+)\s+left\.?\s*$"),
     re.compile(r"^\s*([A-Za-z0-9_\-\.]+)\s+has left the game", re.I),
+    # VS sometimes phrases disconnects as "Player Steve got removed."
+    # The \b after "removed" lets us match a plain period or a tail
+    # like "got removed from the player list".
+    re.compile(r"^\s*Player\s+([A-Za-z0-9_\-\.]+)\s+got\s+removed\b", re.I),
 ]
+# Multi-line /list clients output, used by current VS builds:
+#     [23:39:39] [Server Notification] List of online Players
+#     [23:39:39] Playing [2] Fighter199 [::ffff:1.2.3.4]:45893 (50ms) (200s inactive)
+#     [23:39:39] Playing [4] Vlast_ [::ffff:5.6.7.8]:59259 (95ms) (177s inactive)
+# The header opens an accumulation window (handled host-side); each
+# Playing line contributes one name; the next non-matching line closes
+# the window and flushes via _sync_players_from_list.
+_RE_LIST_HEADER = re.compile(r"^\s*List of online Players\s*$", re.I)
+_RE_LIST_ENTRY  = re.compile(
+    r"^\s*Playing\s+\[\d+\]\s+([A-Za-z0-9_\-\.]+)\s+\[",
+    re.I)
+# Older inline format ("Connected players: a, b, c") — kept for
+# backward compatibility with VS builds that emit this shape.
 _RE_LIST_CLIENTS = re.compile(
     r"(?:connected players|players online|online players|list of clients)[^:]*:\s*(.+)",
     re.I)
@@ -169,7 +202,17 @@ _RE_PLAYER_ROLE = re.compile(
 
 
 def parse_player_event(line: str):
-    """Return (event, name) — event is 'join', 'leave', 'list', or None."""
+    """Return (event, name) — event is one of:
+        'join'        — a player connected
+        'leave'       — a player disconnected
+        'list'        — older inline "Connected players: …" format
+        'list_header' — start of a multi-line /list clients block
+                        (VS 1.20+); host accumulates list_entry
+                        events until the next non-list line and
+                        then flushes via _sync_players_from_list
+        'list_entry'  — one player in a multi-line /list clients block
+        None          — line was none of the above
+    """
     stripped = strip_log_prefix(line)
     for pat in _RE_JOIN_PATTERNS:
         m = pat.search(stripped)
@@ -179,6 +222,13 @@ def parse_player_event(line: str):
         m = pat.search(stripped)
         if m:
             return ("leave", m.group(1))
+    # Try the multi-line format first — it's the current VS shape.
+    if _RE_LIST_HEADER.search(stripped):
+        return ("list_header", "")
+    m = _RE_LIST_ENTRY.search(stripped)
+    if m:
+        return ("list_entry", m.group(1))
+    # Fallback to the older inline "Connected players: …" format.
     m = _RE_LIST_CLIENTS.search(stripped)
     if m:
         return ("list", m.group(1).strip().rstrip("."))

@@ -162,12 +162,73 @@ class TestParsePlayerEvent:
         line = "[Audit] Client Steve disconnected"
         assert parse_player_event(line) == ("leave", "Steve")
 
+    def test_leave_got_removed_period(self):
+        # VS phrases some disconnects as "Player NAME got removed."
+        # Pinned regression: this MUST be classified as a leave event.
+        assert parse_player_event("Player Steve got removed.") == \
+            ("leave", "Steve")
+
+    def test_leave_got_removed_with_tail(self):
+        # "got removed from the player list" form
+        line = "Player Alice got removed from the player list."
+        assert parse_player_event(line) == ("leave", "Alice")
+
+    def test_leave_got_removed_with_timestamp(self):
+        line = "12.04.2026 11:23:45 Player Bob got removed."
+        assert parse_player_event(line) == ("leave", "Bob")
+
+
     def test_no_match(self):
         assert parse_player_event("Server started.") == (None, None)
 
     def test_list_clients(self):
         assert parse_player_event("Connected players: alice, bob, charlie") \
             == ("list", "alice, bob, charlie")
+
+    def test_list_header_multi_line(self):
+        # Pinned regression for the actual VS /list clients output:
+        # the header line opens a multi-line accumulation block.
+        line = ("[23:39:39] 29.4.2026 23:39:39 "
+                "[Server Notification] List of online Players")
+        assert parse_player_event(line) == ("list_header", "")
+
+    def test_list_entry_multi_line(self):
+        line = ("[23:39:39] Playing [2] Fighter199 "
+                "[::ffff:176.227.243.18]:45893 (50ms) (200s inactive)")
+        assert parse_player_event(line) == ("list_entry", "Fighter199")
+
+    def test_list_entry_with_underscore_name(self):
+        # User's actual log captured "Vlast_" — trailing underscore.
+        line = ("[23:39:39] Playing [4] Vlast_ "
+                "[::ffff:73.11.236.192]:59259 (95ms) (177s inactive)")
+        assert parse_player_event(line) == ("list_entry", "Vlast_")
+
+    def test_list_entry_mixed_case(self):
+        line = ("[23:39:39] Playing [7] DerelictDawn "
+                "[::ffff:74.12.59.136]:62341 (95ms) (10s inactive)")
+        assert parse_player_event(line) == ("list_entry", "DerelictDawn")
+
+    def test_list_header_without_console_prefix(self):
+        # Some log paths may emit just the wall-clock timestamp.
+        line = "29.4.2026 23:39:39 [Server Notification] List of online Players"
+        assert parse_player_event(line) == ("list_header", "")
+
+    def test_list_handling_console_command_does_not_match(self):
+        # The "Handling Console Command /list clients" echo line
+        # must NOT match list_header — it's our own command bouncing
+        # back, not VS announcing the list.
+        line = ("29.4.2026 23:39:39 [Server Notification] "
+                "Handling Console Command /list clients")
+        evt, _ = parse_player_event(line)
+        assert evt != "list_header"
+        assert evt != "list_entry"
+
+    def test_list_inline_format_still_works(self):
+        # The older inline format some VS builds use must still parse
+        # — backward compatibility.
+        assert parse_player_event(
+            "Connected players: alice, bob") == ("list", "alice, bob")
+
 
 
 class TestSplitClientList:

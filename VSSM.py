@@ -77,6 +77,9 @@ from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                          Sparkline, ScrollableFrame, themed_frame,
                          panel_header, collapsible_section, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
+from ui.tab_chat_log import ChatLogTab
+from core.chat_log import ChatLogStore, parse_chat_with_group
+from core.settings import chat_log_path
 from core.player_timers import PlayerTimers, fmt_duration
 from core.settings import load_player_totals
 from ui.tab_autorun import AutorunTab
@@ -294,6 +297,20 @@ class ServerManagerApp(tk.Tk):
         self._pending_role_query: deque = deque()
         # role cache: player_name -> role string
         self._player_roles: dict   = {}
+
+        # Chat-log store: per-group history + user-named groups.
+        # Loads from chat_log_<profile>.json on construction; saves
+        # on flush (called from on_closing and on profile switches).
+        self._chat_store = ChatLogStore(
+            load_history=self._chat_log_load,
+            save_history=self._chat_log_save,
+        )
+        self._chat_log_tab: "ChatLogTab | None" = None
+
+        # Multi-line /list clients buffer (see _flush_list_buffer)
+        self._list_buffer:        list = []
+        self._list_buffer_active: bool = False
+        self._list_buffer_job_id       = None
 
         # Player timer engine — session + lifetime playtime tracking.
         # Lazy-resolves the totals dict on every read so it always
@@ -1022,6 +1039,11 @@ class ServerManagerApp(tk.Tk):
         custom_cmds_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
         self.notebook.add(custom_cmds_frame, text="CUSTOM CMDS")
         self._custom_cmds_tab = CustomCommandsTab(custom_cmds_frame, self)
+
+        # NEW: Chat Log tab — per-group chat history, persisted.
+        chat_log_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
+        self.notebook.add(chat_log_frame, text="CHAT LOG")
+        self._chat_log_tab = ChatLogTab(chat_log_frame, self)
 
         # NEW: Autorun tab
         autorun_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
@@ -2122,6 +2144,28 @@ class ServerManagerApp(tk.Tk):
                                  player, role, message, cmd)
         except Exception:
             LOG.exception("custom cmd dispatch failed")
+        # Chat-log capture: feed grouped chat lines into the per-group
+        # store + tab. Uses the dedicated parser that ALSO returns the
+        # group ID; the older parse_chat_message above is kept because
+        # it handles the angle-bracket form for custom-command dispatch.
+        try:
+            if tag == "chat":
+                gid, p, m = parse_chat_with_group(
+                    raw, strip_fn=__import__("core.parsers",
+                                              fromlist=["strip_log_prefix"]
+                                              ).strip_log_prefix)
+                if gid is not None and p and self._chat_log_tab is not None:
+                    import time as _t
+                    now = _t.time()
+                    self._chat_store.append(gid, p, m or "", now=now)
+                    # Marshal the UI update onto the Tk main thread —
+                    # _handle_server_line runs from the output-queue
+                    # processor which is already on the main thread,
+                    # so this is mostly defensive.
+                    self.after_idle(
+                        self._chat_log_tab.on_new_entry, gid, p, m or "", now)
+        except Exception:
+            LOG.exception("chat log capture failed")
         try:
             SERVER_LOG.info(stripped)
         except Exception:
@@ -2254,19 +2298,87 @@ class ServerManagerApp(tk.Tk):
     # ------------------------------------------------------------------
     # Player tracking
     # ------------------------------------------------------------------
+    # Multi-line /list clients accumulator. The parser emits a
+    # "list_header" event when it sees "List of online Players",
+    # then one "list_entry" per "Playing [N] Name [ip]:port …" row.
+    # _list_buffer collects names; _flush_list_buffer commits them
+    # to _sync_players_from_list (which adds missing + removes
+    # vanished, providing the user-requested fail-safe).
+    def _arm_list_buffer_backstop(self):
+        """(Re-)arm the 1s timer that flushes the list buffer if no
+        more entries arrive. Safe to call even when no buffer is
+        active — it will just no-op on flush."""
+        if getattr(self, "_list_buffer_job_id", None) is not None:
+            try:
+                self.after_cancel(self._list_buffer_job_id)
+            except Exception:
+                pass
+        self._list_buffer_job_id = self.after(
+            1000, self._flush_list_buffer)
+
+    def _flush_list_buffer(self):
+        """Commit the buffered /list clients result to the player
+        list. No-op if no buffer is active. Always cancels the
+        backstop timer."""
+        if getattr(self, "_list_buffer_job_id", None) is not None:
+            try:
+                self.after_cancel(self._list_buffer_job_id)
+            except Exception:
+                pass
+            self._list_buffer_job_id = None
+        if not getattr(self, "_list_buffer_active", False):
+            return
+        names = list(self._list_buffer)
+        self._list_buffer = []
+        self._list_buffer_active = False
+        # _sync_players_from_list does the actual diff: any name in
+        # `names` that isn't currently tracked is added (with role
+        # query queued); any currently-tracked name not in `names`
+        # is removed. This is the fail-safe.
+        self._sync_players_from_list(names)
+
     def _parse_player_event(self, line: str):
         event, payload = parse_player_event(line)
         if event == "join":
+            self._flush_list_buffer()  # any partial list ends here
             self._add_player(payload)
         elif event == "leave":
+            self._flush_list_buffer()
             self._remove_player(payload)
+        elif event == "list_header":
+            # Open a fresh accumulation window. If a previous window
+            # somehow stayed open (shouldn't happen — every header is
+            # followed by entries + a non-list line), discard it.
+            self._list_buffer = []
+            self._list_buffer_active = True
+            # Backstop: if no further matching line arrives within 1s,
+            # flush whatever we have. Cancelled and re-armed on each
+            # entry; cancelled and fired on the next non-list line.
+            self._arm_list_buffer_backstop()
+        elif event == "list_entry":
+            if self._list_buffer_active:
+                if payload and payload not in self._list_buffer:
+                    self._list_buffer.append(payload)
+                self._arm_list_buffer_backstop()
+            # If a list_entry arrives without a preceding header (e.g.
+            # we missed the header due to chunked output), we still
+            # treat it as a one-off join hint — the periodic sync will
+            # catch up on the next /list clients.
         elif event == "list":
+            # Older inline "Connected players: …" format; some VS
+            # builds may still emit this. Bidirectional sync, just
+            # like the multi-line path.
+            self._flush_list_buffer()
             if not payload or payload.lower() in ("none", "no one", "-"):
                 self._sync_players_from_list([])
             else:
                 names = split_client_list(payload)
-                if names:
-                    self._sync_players_from_list(names)
+                self._sync_players_from_list(names)
+        else:
+            # Any other line means the multi-line list block (if open)
+            # has ended. Flush whatever we have.
+            if self._list_buffer_active:
+                self._flush_list_buffer()
 
     def _sync_players_from_list(self, names: list):
         new_set = list(dict.fromkeys(names))
@@ -2847,7 +2959,64 @@ class ServerManagerApp(tk.Tk):
     # ------------------------------------------------------------------
     # Window close
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Chat log persistence helpers
+    # ------------------------------------------------------------------
+    def _chat_log_path_for_active_profile(self) -> str:
+        from core.settings import chat_log_path
+        return chat_log_path(self._settings.get("active_profile"))
+
+    def _chat_log_load(self) -> dict:
+        """Read the per-profile chat history blob from disk.
+        Returns {} if the file doesn't exist or is unreadable —
+        ChatLogStore handles either gracefully."""
+        path = self._chat_log_path_for_active_profile()
+        if not os.path.isfile(path):
+            return {}
+        try:
+            import json
+            with open(path, "r", encoding="utf-8") as f:
+                blob = json.load(f)
+            return blob if isinstance(blob, dict) else {}
+        except Exception:
+            LOG.exception("chat log load failed: %s", path)
+            return {}
+
+    def _chat_log_save(self, blob: dict) -> None:
+        """Atomic-write the chat history blob to disk."""
+        path = self._chat_log_path_for_active_profile()
+        tmp  = path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            import json
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(blob, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception:
+            LOG.exception("chat log save failed: %s", path)
+            # Best-effort tmp cleanup
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+
+    def _chat_store_changed(self) -> None:
+        """Hook for the tab to call after rename / clear actions.
+        Persists the current state immediately."""
+        try:
+            self._chat_store.flush()
+        except Exception:
+            LOG.exception("chat store flush failed")
+
     def on_closing(self):
+        # Flush the chat-log store first so any unsaved messages land
+        # on disk even if the rest of shutdown is interrupted.
+        try:
+            self._chat_store.flush()
+        except Exception:
+            LOG.exception("chat store flush on close failed")
+
         # Final timer flush — even if the server is still running,
         # capture the in-flight session time before we exit.
         try:

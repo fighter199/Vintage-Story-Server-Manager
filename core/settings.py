@@ -24,6 +24,20 @@ from .constants import LOG, script_dir, SETTINGS_SCHEMA_VERSION
 def settings_path() -> str:
     return os.path.join(script_dir(), "vserverman_settings.json")
 
+def chat_log_path(profile: str | None = None) -> str:
+    """Return the path to the per-profile chat-history file.
+
+    Lives next to settings.json so users with VSSM rooted on a
+    portable drive get the chat archive moving with them. Filename
+    is chat_log_<profile>.json so multiple profiles co-exist.
+    """
+    base = os.path.dirname(settings_path())
+    name = (profile or "default").strip() or "default"
+    # Sanitise: only allow filename-safe chars in the profile slug.
+    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in name)
+    return os.path.join(base, f"chat_log_{safe}.json")
+
+
 
 # ----------------------------------------------------------------------
 # Public API
