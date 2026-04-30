@@ -12,9 +12,6 @@ Each rule has:
     - commands         — multi-line text, one console command per line,
                          lines starting with `#` are treated as comments
     - run_on_start     — fire once at server start (then on interval)
-    - run_on_save      — fire once whenever the rule is saved (resets
-                         the next-fire deadline so the periodic cadence
-                         re-anchors to save-time)
     - pause_when_empty — skip ticks when 0 players are online
 
 Rules are per-profile, persisted alongside custom commands by the
@@ -246,18 +243,6 @@ class AutorunTab:
                         command=self._on_field_change
                         ).pack(anchor=tk.W, padx=pad, pady=(8, 2))
 
-        # Run-on-save: fire whenever this rule is saved, AND reset the
-        # interval so the next periodic fire is `interval_secs` from
-        # save-time. Useful for "I just edited a /broadcast text — run
-        # it now to verify, and re-anchor the every-15-min cadence."
-        self._run_on_save_var = tk.BooleanVar(value=False)
-        TermCheckbutton(body, "Run immediately whenever this rule is saved "
-                              "(resets the interval)",
-                        self._run_on_save_var,
-                        font_spec=self._app.F_SMALL,
-                        command=self._on_field_change
-                        ).pack(anchor=tk.W, padx=pad, pady=(2, 2))
-
         # Pause when empty
         self._pause_when_empty_var = tk.BooleanVar(value=False)
         TermCheckbutton(body, "Pause when 0 players are online "
@@ -303,14 +288,6 @@ class AutorunTab:
         btn_row.pack(fill=tk.X, padx=pad, pady=(2, 12))
         TermButton(btn_row, "💾 Save", self._on_save,
                    variant="start", font_spec=self._app.F_BTN,
-                   padx=10, pady=4).pack(side=tk.LEFT, padx=(0, 4))
-        # ▶ Run Now is a one-shot: send the current saved state of
-        # the selected rule's commands once, immediately, and reset
-        # the next scheduled fire. It does NOT save the editor's
-        # in-memory edits first — to do that, use the "Run on save"
-        # checkbox above and click 💾 Save.
-        TermButton(btn_row, "▶ Run Now", self._on_run_now,
-                   variant="amber", font_spec=self._app.F_BTN,
                    padx=10, pady=4).pack(side=tk.LEFT, padx=(0, 4))
         TermButton(btn_row, "↺ Discard", self._on_discard,
                    variant="amber", font_spec=self._app.F_SMALL,
@@ -371,7 +348,6 @@ class AutorunTab:
             icon = "✓" if enabled else "○"
             badges = []
             if rule.get("run_on_start"):     badges.append("@start")
-            if rule.get("run_on_save"):      badges.append("@save")
             if rule.get("pause_when_empty"): badges.append("paused-if-empty")
             badge_str = ("  " + " ".join(badges)) if badges else ""
             self._listbox.insert(
@@ -405,7 +381,6 @@ class AutorunTab:
         self._interval_var.set(str(n))
         self._unit_var.set(unit)
         self._run_on_start_var.set(bool(rule.get("run_on_start")))
-        self._run_on_save_var.set(bool(rule.get("run_on_save")))
         self._pause_when_empty_var.set(bool(rule.get("pause_when_empty")))
         self._cmd_text.delete("1.0", tk.END)
         self._cmd_text.insert("1.0", rule.get("commands") or "")
@@ -424,7 +399,6 @@ class AutorunTab:
             "interval_secs":    secs,
             "commands":         self._cmd_text.get("1.0", tk.END).rstrip(),
             "run_on_start":     self._run_on_start_var.get(),
-            "run_on_save":      self._run_on_save_var.get(),
             "pause_when_empty": self._pause_when_empty_var.get(),
         }
 
@@ -512,63 +486,6 @@ class AutorunTab:
         self._app._notify("Autorun rule saved.", level="success",
                           duration_ms=1800)
         self._notify_scheduler_changed()
-        # Honour the "Run on save" checkbox AFTER persistence so the
-        # scheduler's per-tick provider sees the just-saved version.
-        if rule.get("run_on_save"):
-            self._fire_rule_now(rule.get("name") or "")
-
-    def _on_run_now(self) -> None:
-        """One-shot fire: run the SAVED state of the selected rule
-        right now. Does NOT pull in pending editor changes — to do
-        that, hit 💾 Save (which honours the Run-on-save checkbox)."""
-        if self._selected_index is None:
-            self._app._notify("Pick a rule first.", level="warn")
-            return
-        rules = self._load_rules()
-        if self._selected_index >= len(rules):
-            return
-        target = rules[self._selected_index]
-        ok, reason = validate_rule(target)
-        if not ok:
-            self._app._notify(f"Can't run: {reason}", level="error")
-            return
-        # Cheap visual feedback: if there are unsaved edits, warn the
-        # user that Run Now uses the saved version.
-        editor_state = self._collect_rule_from_editor()
-        if editor_state != target:
-            self._app._notify(
-                "Running the SAVED version (unsaved edits ignored).",
-                level="warn", duration_ms=2200)
-        self._fire_rule_now(target.get("name") or "")
-
-    def _fire_rule_now(self, rule_name: str) -> None:
-        """Ask the host to fire a rule via its scheduler. The host hook
-        is best-effort — if the server isn't running or the scheduler
-        isn't started, the call is a no-op (the scheduler emits an
-        audit record either way)."""
-        if not rule_name:
-            return
-        fn = getattr(self._app, "_autorun_fire_rule", None)
-        if not callable(fn):
-            self._app._notify(
-                "This VSSM build doesn't support Run Now (host hook missing).",
-                level="error")
-            return
-        try:
-            fired = fn(rule_name)
-        except Exception:
-            fired = 0
-        # The host hook returns the number of commands sent. Zero
-        # means a gate blocked the fire — the scheduler already
-        # emitted an audit record explaining why.
-        if fired:
-            self._app._notify(f"Fired '{rule_name}' ({fired} cmd"
-                              f"{'s' if fired != 1 else ''}).",
-                              level="success", duration_ms=1800)
-        else:
-            self._app._notify(
-                f"'{rule_name}' did not fire — see audit log.",
-                level="warn", duration_ms=2200)
 
     def _on_discard(self) -> None:
         if self._selected_index is None:

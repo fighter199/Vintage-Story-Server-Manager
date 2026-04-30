@@ -2815,6 +2815,24 @@ class ServerManagerApp(tk.Tk):
         # internals. Live edits already work via the per-tick provider.
         return
 
+    def _autorun_fire_rule(self, rule_name: str) -> int:
+        """Host hook for the AUTORUN tab's "Run on save" checkbox and
+        "▶ Run Now" button. Asks the scheduler to fire the named rule
+        once, immediately, and reset its interval so the next periodic
+        fire is `interval_secs` from now.
+
+        Returns the number of console commands actually sent. A return
+        of 0 means a gate (enabled, pause_when_empty) blocked the fire,
+        the scheduler isn't started (no live server), or the named
+        rule doesn't exist. The scheduler emits an audit record in
+        every case, so the tab's audit strip explains the outcome.
+        """
+        try:
+            return self._autorun_scheduler.fire_now(rule_name)
+        except Exception:
+            LOG.exception("autorun fire_now failed for %r", rule_name)
+            return 0
+
     def _tick_autorun(self) -> None:
         """1Hz tick: ask the scheduler to process any due rules."""
         try:

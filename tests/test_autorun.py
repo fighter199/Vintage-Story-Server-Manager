@@ -427,3 +427,183 @@ class TestSchedulerInspection:
                                 clock=clock)
         # never started
         assert sch.seconds_to_next("save") is None
+
+
+# ----------------------------------------------------------------------
+# fire_now() and run_on_save
+# ----------------------------------------------------------------------
+class TestFireNow:
+    def _make(self, clock, rules, players=1):
+        return AutorunScheduler(lambda: rules, Sender(), lambda: players,
+                                 clock=clock)
+
+    def test_fire_now_when_stopped_returns_zero_and_audits(self):
+        # Pressing "Run Now" with no server up should not crash and
+        # should not pretend to send.
+        clock = FakeClock(1000)
+        send = Sender()
+        events: list[AutorunAudit] = []
+        rules = [{"name": "save", "interval_secs": 60,
+                  "commands": "/save", "enabled": True}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 1,
+                                audit=events.append, clock=clock)
+        # Note: never .start()'d
+        n = sch.fire_now("save")
+        assert n == 0
+        assert send.sent == []
+        assert len(events) == 1
+        assert events[0].fired is False
+        assert events[0].skipped_reason == "not_running"
+
+    def test_fire_now_unknown_rule(self):
+        clock = FakeClock(1000)
+        send = Sender()
+        events: list[AutorunAudit] = []
+        rules = [{"name": "save", "interval_secs": 60,
+                  "commands": "/save", "enabled": True}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 1,
+                                audit=events.append, clock=clock)
+        sch.start()
+        n = sch.fire_now("nope")
+        assert n == 0
+        assert send.sent == []
+
+    def test_fire_now_sends_immediately(self):
+        clock = FakeClock(1000)
+        send = Sender()
+        rules = [{"name": "save", "interval_secs": 600,
+                  "commands": "/save", "enabled": True}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 1, clock=clock)
+        sch.start()
+        # Tick before deadline: nothing
+        clock.advance(60)
+        sch.tick()
+        assert send.sent == []
+        # Run now: immediate fire
+        sch.fire_now("save")
+        assert send.sent == ["/save"]
+
+    def test_fire_now_resets_next_fire(self):
+        # After fire_now, the next scheduled fire should be `interval`
+        # seconds from the fire_now call, not from the original anchor.
+        clock = FakeClock(1000)
+        send = Sender()
+        rules = [{"name": "save", "interval_secs": 60,
+                  "commands": "/save", "enabled": True}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 1, clock=clock)
+        sch.start()
+        # Fire now after 30s. Next scheduled fire was at +60; now it
+        # should be at +30+60 = +90.
+        clock.advance(30)
+        sch.fire_now("save")
+        assert send.sent == ["/save"]
+        # 30s later (would have been original deadline) → no extra fire
+        clock.advance(30)
+        sch.tick()
+        assert send.sent == ["/save"]
+        # 30s after that → exactly 60s after fire_now, so new deadline hits
+        clock.advance(30)
+        sch.tick()
+        assert send.sent == ["/save", "/save"]
+
+    def test_fire_now_respects_disabled_gate(self):
+        clock = FakeClock(1000)
+        send = Sender()
+        events: list[AutorunAudit] = []
+        rules = [{"name": "save", "interval_secs": 60,
+                  "commands": "/save", "enabled": False}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 1,
+                                audit=events.append, clock=clock)
+        sch.start()
+        n = sch.fire_now("save")
+        assert n == 0
+        assert send.sent == []
+        # Engine emits a "disabled" audit, exactly like a periodic skip.
+        assert any(a.skipped_reason == "disabled" for a in events)
+
+    def test_fire_now_respects_pause_when_empty(self):
+        clock = FakeClock(1000)
+        send = Sender()
+        rules = [{"name": "save", "interval_secs": 60,
+                  "commands": "/save", "enabled": True,
+                  "pause_when_empty": True}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 0, clock=clock)
+        sch.start()
+        n = sch.fire_now("save")
+        assert n == 0
+        assert send.sent == []
+
+    def test_fire_now_blocked_still_resets_schedule(self):
+        # Even if the immediate fire was blocked by a gate, the user's
+        # intent (re-anchor the schedule to "from now") should hold —
+        # otherwise pausing for a minute and clicking Run Now while
+        # empty would still produce the original ticks at 60s, 120s.
+        clock = FakeClock(1000)
+        send = Sender()
+        rules = [{"name": "save", "interval_secs": 60,
+                  "commands": "/save", "enabled": True,
+                  "pause_when_empty": True}]
+        players = [0]
+        sch = AutorunScheduler(lambda: rules, send, lambda: players[0],
+                                clock=clock)
+        sch.start()
+        clock.advance(30)
+        sch.fire_now("save")  # blocked: no players
+        assert send.sent == []
+        # Player joins immediately. The original deadline at +60 is
+        # gone; new deadline is +30 (when fire_now happened) + 60 = +90.
+        players[0] = 1
+        clock.advance(30)  # now at +60 (original deadline)
+        sch.tick()
+        assert send.sent == []  # original deadline was reset
+        clock.advance(30)  # now at +90
+        sch.tick()
+        assert send.sent == ["/save"]
+
+    def test_fire_now_multi_line(self):
+        clock = FakeClock(1000)
+        send = Sender()
+        rules = [{"name": "save", "interval_secs": 60,
+                  "commands": "/save\n/announce ok", "enabled": True}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 1, clock=clock)
+        sch.start()
+        n = sch.fire_now("save")
+        assert n == 2
+        assert send.sent == ["/save", "/announce ok"]
+
+    def test_fire_now_case_insensitive_lookup(self):
+        # Names go through .lower() in _rule_id, so the API should
+        # accept any case.
+        clock = FakeClock(1000)
+        send = Sender()
+        rules = [{"name": "Save", "interval_secs": 60,
+                  "commands": "/save", "enabled": True}]
+        sch = AutorunScheduler(lambda: rules, send, lambda: 1, clock=clock)
+        sch.start()
+        sch.fire_now("save")  # lowercase 's'
+        assert send.sent == ["/save"]
+
+
+class TestRunOnSaveField:
+    def test_default_is_false(self):
+        r = make_empty_rule()
+        assert r["run_on_save"] is False
+
+    def test_normalize_seeds_field(self):
+        r = {"name": "x", "interval_secs": 60, "commands": "/save"}
+        normalize_rule(r)
+        assert "run_on_save" in r
+        assert r["run_on_save"] is False
+
+    def test_normalize_coerces_truthy(self):
+        r = {"name": "x", "interval_secs": 60, "commands": "/save",
+             "run_on_save": 1}
+        normalize_rule(r)
+        assert r["run_on_save"] is True
+
+    def test_normalize_keeps_field_in_allowed(self):
+        # Round-trips through normalize without being dropped as unknown.
+        r = {"name": "x", "interval_secs": 60, "commands": "/save",
+             "run_on_save": True}
+        normalize_rule(r)
+        assert r.get("run_on_save") is True

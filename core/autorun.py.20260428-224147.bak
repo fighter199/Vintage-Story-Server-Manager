@@ -36,7 +36,7 @@ from typing import Callable, Iterable
 # would later round-trip through settings.json.
 _ALLOWED_KEYS = frozenset({
     "name", "enabled", "interval_secs", "commands",
-    "run_on_start", "run_on_save", "pause_when_empty",
+    "run_on_start", "pause_when_empty",
 })
 
 
@@ -51,7 +51,6 @@ def make_empty_rule() -> dict:
         "interval_secs":    300,        # 5 min
         "commands":         "",
         "run_on_start":     False,
-        "run_on_save":      False,
         "pause_when_empty": False,
     }
 
@@ -73,7 +72,6 @@ def normalize_rule(rule: dict) -> dict:
     rule.setdefault("interval_secs",    300)
     rule.setdefault("commands",         "")
     rule.setdefault("run_on_start",     False)
-    rule.setdefault("run_on_save",      False)
     rule.setdefault("pause_when_empty", False)
 
     # Type/range coercion
@@ -84,7 +82,6 @@ def normalize_rule(rule: dict) -> dict:
 
     rule["enabled"]          = bool(rule["enabled"])
     rule["run_on_start"]     = bool(rule["run_on_start"])
-    rule["run_on_save"]      = bool(rule["run_on_save"])
     rule["pause_when_empty"] = bool(rule["pause_when_empty"])
     rule["name"]             = str(rule.get("name") or "").strip()
     rule["commands"]         = str(rule.get("commands") or "")
@@ -241,55 +238,6 @@ class AutorunScheduler:
         for rid in list(self._next_fire):
             if rid not in seen_ids:
                 del self._next_fire[rid]
-        return sent
-
-    # ------------------------------------------------------------------
-    # On-demand firing (UI "Run Now" button)
-    # ------------------------------------------------------------------
-    def fire_now(self, rule_name: str, now: float | None = None) -> int:
-        """Fire the named rule once, immediately, AND reset its next
-        scheduled fire so the regular interval restarts from now.
-
-        Honours all the same gates as a normal scheduled fire (enabled,
-        pause_when_empty). Skipped fires emit an audit record exactly
-        like the periodic path.
-
-        Returns the number of console commands actually written. Returns
-        0 if:
-          - the scheduler isn't running (no server up to send to)
-          - the named rule doesn't exist
-          - a gate blocked the fire (disabled, paused_empty)
-          - the rule has no expandable commands
-        """
-        if not self._running:
-            self._emit(AutorunAudit(
-                now if now is not None else self._clock(),
-                rule_name or "(unknown)", False,
-                skipped_reason="not_running"))
-            return 0
-        if now is None:
-            now = self._clock()
-        rid = (rule_name or "").strip().lower()
-        if not rid:
-            return 0
-        # Look up the live rule by name (case-insensitive). We re-snapshot
-        # so we hit the same normalized view tick() uses.
-        target = None
-        for rule in self._snapshot():
-            if self._rule_id(rule) == rid:
-                target = rule
-                break
-        if target is None:
-            self._emit(AutorunAudit(now, rule_name, False,
-                                     skipped_reason="not_running"))
-            return 0
-        sent = self._fire_if_allowed(target, now)
-        # Reset the deadline whether or not we actually sent anything —
-        # the user pressed the button, so they expect the schedule to
-        # be re-anchored to now even if e.g. pause_when_empty blocked
-        # this particular fire.
-        self._next_fire[rid] = now + max(1, int(
-            target.get("interval_secs", 300)))
         return sent
 
     # ------------------------------------------------------------------
