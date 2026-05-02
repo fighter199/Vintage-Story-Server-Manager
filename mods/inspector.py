@@ -25,6 +25,7 @@ class LocalModInspector:
             "side":         None,
             "path":         path,
             "dependencies": {},
+            "authors":      [],
             "error":        None,
         }
         try:
@@ -63,6 +64,19 @@ class LocalModInspector:
                     result["dependencies"] = {str(k): str(v) for k, v in deps.items()}
                 side = lk.get("side")
                 result["side"] = str(side).strip().lower() if side else "universal"
+                # Authors: modinfo spec uses `authors` (plural list), but
+                # some legacy mods have `author` (singular string). Accept
+                # either; normalise to a clean list of non-empty strings.
+                authors = lk.get("authors")
+                if isinstance(authors, list):
+                    result["authors"] = [str(a).strip() for a in authors
+                                          if a and str(a).strip()]
+                elif isinstance(authors, str) and authors.strip():
+                    result["authors"] = [authors.strip()]
+                else:
+                    legacy = lk.get("author")
+                    if isinstance(legacy, str) and legacy.strip():
+                        result["authors"] = [legacy.strip()]
         except Exception as e:
             result["error"] = f"read failed: {e}"
         return result

@@ -153,6 +153,43 @@ def _build_mods_installed_subtab(app: 'ServerManagerApp', parent):
     ).pack(side=tk.LEFT, padx=(8, 2))
 
     # Listbox fills the middle.
+    # Search row — sits above the listbox. Live-filters the cached
+    # metadata (filename + modid + name + authors). Empty query shows
+    # everything; case-insensitive substring match.
+    search_row = tk.Frame(pad, bg=Theme.BG_PANEL)
+    search_row.pack(fill=tk.X, pady=(2, 2))
+    tk.Label(search_row, text="🔍",
+              fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
+              font=app.F_SMALL).pack(side=tk.LEFT, padx=(0, 4))
+    if not hasattr(app, "_mod_search_var"):
+        app._mod_search_var = tk.StringVar(value="")
+    if not hasattr(app, "_mod_search_count_var"):
+        app._mod_search_count_var = tk.StringVar(value="")
+    search_entry = TermEntry(search_row,
+                              textvariable=app._mod_search_var,
+                              font_spec=app.F_SMALL)
+    search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=2)
+    # Clear button: one-click reset of the filter.
+    def _clear_search(_e=None):
+        try:
+            app._mod_search_var.set("")
+        except Exception:
+            pass
+    TermButton(search_row, "✕", _clear_search,
+                variant="amber", font_spec=app.F_SMALL,
+                padx=6, pady=1).pack(side=tk.LEFT, padx=(4, 0))
+    # Result count label.
+    tk.Label(search_row, textvariable=app._mod_search_count_var,
+              fg=Theme.MUTED, bg=Theme.BG_PANEL,
+              font=app.F_SMALL).pack(side=tk.LEFT, padx=(8, 0))
+    # Live filter: rerun on every keystroke. The trace is registered
+    # only once per app session — guarded by an attribute marker so
+    # rebuilding the tab (theme switch, etc.) doesn't stack handlers.
+    if not getattr(app, "_mod_search_trace_registered", False):
+        app._mod_search_var.trace_add(
+            "write", lambda *_: _apply_mod_filter(app))
+        app._mod_search_trace_registered = True
+
     list_wrap = tk.Frame(pad, bg=Theme.BORDER)
     list_wrap.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
     list_inner = tk.Frame(list_wrap, bg=Theme.BG_INPUT)
@@ -501,13 +538,133 @@ def _build_mods_browse_right(app: 'ServerManagerApp', parent):
 # ------------------------------------------------------------------
 
 def load_mods(app: 'ServerManagerApp'):
+    """Refresh the installed mod list.
+
+    Reads every mod file's modinfo.json into `app._mod_metadata_cache`
+    (filename -> info dict from LocalModInspector). Then applies the
+    current search filter to repopulate the listbox.
+
+    The cache is what powers the live search box above the listbox —
+    the filter never re-parses, only this function does. Add / Remove /
+    Enable / Disable all call back through here, so freshly-changed
+    mods are reflected on the next render."""
     d = app.mods_folder_var.get()
     if not d or not os.path.isdir(d):
+        # Empty cache so a stale list from a previous folder doesn't
+        # linger after the user clears or breaks the path.
+        app._mod_metadata_cache = {}
+        try:
+            app.mod_listbox.delete(0, tk.END)
+        except Exception:
+            pass
+        _apply_mod_filter(app)
         return
-    app.mod_listbox.delete(0, tk.END)
+
+    cache: dict = {}
     for f in sorted(os.listdir(d)):
-        if f.lower().endswith(('.jar', '.zip', '.dll', '.disabled')):
-            app.mod_listbox.insert(tk.END, f)
+        if not f.lower().endswith(('.jar', '.zip', '.dll', '.disabled')):
+            continue
+        full = os.path.join(d, f)
+        try:
+            info = LocalModInspector.read_mod_file(full)
+        except Exception:
+            # If reading throws (corrupt zip, race condition), still
+            # show the file by filename. The filter will fall back to
+            # filename-only matching for entries with no info.
+            info = {"name": f, "modid": None, "version": None,
+                    "side": None, "path": full,
+                    "dependencies": {}, "error": "read failed"}
+        cache[f] = info
+    app._mod_metadata_cache = cache
+    _apply_mod_filter(app)
+
+
+def _apply_mod_filter(app: 'ServerManagerApp'):
+    """Push the cached mod list through the current search query into
+    the listbox. Called from load_mods() after a fresh parse, AND from
+    the search-Entry trace whenever the user types.
+
+    Match rules:
+      - empty / whitespace query -> show everything
+      - otherwise: case-insensitive substring against the union of
+        the filename, modid, display name, and each author name
+      - mods that failed to parse fall back to filename-only matching
+    """
+    cache: dict = getattr(app, "_mod_metadata_cache", {}) or {}
+    query = ""
+    try:
+        query = (app._mod_search_var.get() or "").strip().lower()
+    except Exception:
+        query = ""
+
+    # Preserve the user's current selection across filter changes
+    # when possible — if their previously-selected file is still in
+    # the new visible list, re-select it.
+    prior_selection = None
+    try:
+        sel = app.mod_listbox.curselection()
+        if sel:
+            prior_selection = app.mod_listbox.get(sel[0])
+    except Exception:
+        pass
+
+    matches: list[str] = []
+    if not query:
+        matches = sorted(cache.keys())
+    else:
+        for fn, info in cache.items():
+            haystacks = [fn]
+            if info:
+                modid = info.get("modid")
+                if modid:
+                    haystacks.append(str(modid))
+                name = info.get("name")
+                # info["name"] defaults to the filename when the mod
+                # had no modinfo, so we only add it when it differs.
+                if name and name != fn:
+                    haystacks.append(str(name))
+                authors = info.get("authors") or []
+                if isinstance(authors, list):
+                    for a in authors:
+                        if a:
+                            haystacks.append(str(a))
+                # Some legacy modinfo files have a singular "author"
+                # field instead of "authors" (a list).
+                author = info.get("author")
+                if author:
+                    haystacks.append(str(author))
+            blob = " ".join(haystacks).lower()
+            if query in blob:
+                matches.append(fn)
+        matches.sort()
+
+    try:
+        app.mod_listbox.delete(0, tk.END)
+        for fn in matches:
+            app.mod_listbox.insert(tk.END, fn)
+    except Exception:
+        return
+
+    # Restore selection if possible.
+    if prior_selection and prior_selection in matches:
+        try:
+            idx = matches.index(prior_selection)
+            app.mod_listbox.selection_set(idx)
+            app.mod_listbox.see(idx)
+        except (ValueError, Exception):
+            pass
+
+    # Update the result-count label if it exists (built alongside the
+    # search Entry — see _build_mods_installed_subtab).
+    try:
+        total = len(cache)
+        shown = len(matches)
+        if query:
+            app._mod_search_count_var.set(f"{shown}/{total} match")
+        else:
+            app._mod_search_count_var.set(f"{total} mod{'s' if total != 1 else ''}")
+    except Exception:
+        pass
 
 def _selected_mod(app: 'ServerManagerApp'):
     sel = app.mod_listbox.curselection()
