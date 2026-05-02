@@ -8,6 +8,7 @@ UI never crashes on network flakes.
 from __future__ import annotations
 
 import json
+import os
 import socket
 import ssl
 import urllib.error
@@ -16,6 +17,7 @@ import urllib.request
 
 from core.constants import APP_NAME, APP_VERSION
 from core.utils import clean_mod_filename
+from mods.moddb_cache import ModDbCache
 
 
 def _sanitize_url(url: str) -> str:
@@ -50,11 +52,24 @@ class ModDbClient:
     USER_AGENT    = f"{APP_NAME}/{APP_VERSION} (+vintagestory mod manager)"
     REQ_TIMEOUT   = 15
 
+    # Default thread-pool size for parallel mod-update checks.
+    # Conservatively low to stay polite with ModDB; a single client
+    # opening 8 concurrent HTTPS connections is well within
+    # respectful-citizen territory. Lower this if you ever see
+    # rate-limit errors during a check.
+    UPDATE_CHECK_PARALLELISM = 8
+
     def __init__(self):
         self._tags_cache        = None
         self._gameversions_cache = None
         self._icon_cache: dict  = {}
         self._ssl_ctx = ssl.create_default_context()
+        # On-disk TTL cache for /api/mod/<modid>. Lazy-initialised on
+        # first use so we don't touch disk just by constructing the
+        # client (which happens at app startup before the user's
+        # settings path is necessarily known).
+        self._mod_cache: ModDbCache | None = None
+        self._mod_cache_path: str | None   = None
 
     def _open(self, req):
         return urllib.request.urlopen(req, timeout=self.REQ_TIMEOUT,
@@ -199,6 +214,67 @@ class ModDbClient:
             return data
         except Exception:
             return None
+
+    # ------------------------------------------------------------------
+    # On-disk cache wiring (used by the mod-update check)
+    # ------------------------------------------------------------------
+    def attach_cache(self, path: str, ttl_secs: int = 6 * 3600) -> None:
+        """Wire up an on-disk TTL cache at the given path. Called once
+        by the host after settings are loaded so the cache lives next
+        to settings.json. Subsequent calls replace the cache.
+
+        Calling this is optional — if no cache is attached, every
+        get_mod_cached() call goes to the network."""
+        self._mod_cache_path = path
+        self._mod_cache = ModDbCache(path=path, ttl_secs=ttl_secs)
+
+    def get_mod_cached(self, mod_id_or_slug, force_refresh: bool = False
+                       ) -> dict:
+        """Like get_mod() but consults the on-disk TTL cache first.
+
+        - `force_refresh=True` skips the cache lookup but still writes
+          the freshly-fetched result back to the cache.
+        - If no cache is attached (attach_cache was never called),
+          this is exactly equivalent to get_mod().
+        - On network failure, raises the same exception get_mod() does
+          (the caller handles per-mod errors). The cache is not
+          populated with errored results.
+        """
+        key = str(mod_id_or_slug)
+        if self._mod_cache is not None and not force_refresh:
+            cached = self._mod_cache.get(key)
+            if cached is not None:
+                return cached
+        data = self.get_mod(mod_id_or_slug)
+        if self._mod_cache is not None and isinstance(data, dict) and data:
+            self._mod_cache.put(key, data)
+        return data
+
+    def save_cache(self) -> bool:
+        """Persist the cache to disk. Returns True if a write
+        happened, False if nothing to save or no cache attached."""
+        if self._mod_cache is None:
+            return False
+        return self._mod_cache.save()
+
+    def cache_age_secs(self, mod_id_or_slug):
+        """Return age in seconds of the cached entry for this modid,
+        or None if no entry / no cache attached. Useful for UI hints."""
+        if self._mod_cache is None:
+            return None
+        return self._mod_cache.age_secs(str(mod_id_or_slug))
+
+    def has_fresh_cached(self, mod_id_or_slug) -> bool:
+        """True if a non-expired cache entry exists for this modid.
+        Returns False if no cache is attached or the entry is stale."""
+        if self._mod_cache is None:
+            return False
+        return self._mod_cache.has_fresh(str(mod_id_or_slug))
+
+    def clear_cache(self) -> None:
+        """Drop every cached entry. Save still required to persist."""
+        if self._mod_cache is not None:
+            self._mod_cache.clear()
 
     @staticmethod
     def _safe_remove(path):

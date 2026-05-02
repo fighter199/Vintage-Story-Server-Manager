@@ -98,6 +98,12 @@ def _build_mods_installed_subtab(app: 'ServerManagerApp', parent):
     # Pack the action-button row FIRST, pinned to the bottom.
     btns = tk.Frame(pad, bg=Theme.BG_PANEL)
     btns.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+    # Tk var that the worker reads to decide whether to bypass the
+    # on-disk update-check cache. Toggled by the "Force refresh"
+    # checkbox below, AND temporarily by Shift-clicking Check Updates.
+    if not hasattr(app, "_update_check_force_refresh_var"):
+        app._update_check_force_refresh_var = tk.BooleanVar(value=False)
+
     for label, cmd, variant in [
         ("↻ Refresh",       app.load_mods,              "amber"),
         ("✓ Enable",        app.enable_selected_mod,    "start"),
@@ -108,9 +114,43 @@ def _build_mods_installed_subtab(app: 'ServerManagerApp', parent):
         ("🌐 ModDB Page",   app.open_selected_mod_on_moddb,
                                                          "amber"),
     ]:
-        TermButton(btns, label, cmd,
-                   variant=variant, font_spec=app.F_SMALL,
-                   padx=8, pady=3).pack(side=tk.LEFT, padx=2)
+        btn = TermButton(btns, label, cmd,
+                         variant=variant, font_spec=app.F_SMALL,
+                         padx=8, pady=3)
+        btn.pack(side=tk.LEFT, padx=2)
+        # Shift+click on "Check Updates" → temporarily force a fresh
+        # API hit for this run, even if the cache has fresh entries.
+        # The flag auto-clears at the start of each check, so this
+        # only affects the immediate run.
+        if label.endswith("Check Updates"):
+            def _shift_click_force(_e, _cmd=cmd):
+                # Set both: the persistent var (which the toolbar
+                # checkbox below reflects) and the immediate flag the
+                # worker reads.
+                try:
+                    app._update_check_force_refresh_var.set(True)
+                except Exception:
+                    pass
+                _cmd()
+                # Auto-clear the var so subsequent ordinary clicks go
+                # back to the cached fast path.
+                try:
+                    app.after(50, lambda:
+                        app._update_check_force_refresh_var.set(False))
+                except Exception:
+                    pass
+                return "break"  # don't fire the normal click handler
+            btn.bind("<Shift-Button-1>", _shift_click_force)
+
+    # Toolbar checkbox: persistent toggle for "force refresh on every
+    # subsequent Check Updates click." Kept off by default (the cache
+    # is the whole point); flick it on if you've just published a
+    # release on ModDB and want every check to skip the cache for now.
+    TermCheckbutton(
+        btns, "Force refresh",
+        app._update_check_force_refresh_var,
+        font_spec=app.F_SMALL,
+    ).pack(side=tk.LEFT, padx=(8, 2))
 
     # Listbox fills the middle.
     list_wrap = tk.Frame(pad, bg=Theme.BORDER)
@@ -1271,7 +1311,10 @@ def _set_moddb_progress(app: 'ServerManagerApp', got, total, label):
 def check_mod_updates(app: 'ServerManagerApp'):
     """Read every local mod's modinfo.json, then ask ModDB for the
     latest matching release. Present a summary dialog + offer bulk
-    update for those that are stale."""
+    update for those that are stale.
+
+    Uses the on-disk TTL cache by default; tick the "Force refresh"
+    checkbox in the Mods tab toolbar to bypass it for one run."""
     mods_dir = app.mods_folder_var.get()
     if not mods_dir or not os.path.isdir(mods_dir):
         app._notify("Set a valid Mods folder first.", level="warn")
@@ -1288,7 +1331,18 @@ def check_mod_updates(app: 'ServerManagerApp'):
         app._notify("No mods found locally.", level="info")
         return
 
-    app._set_moddb_status(f"Checking updates for {len(local)} mod(s)…")
+    # Pull the force-refresh flag off the toolbar Tk var (set by the
+    # checkbox added in _build_mods_browse_left). The plain bool
+    # attribute is what the worker actually reads.
+    try:
+        var = getattr(app, "_update_check_force_refresh_var", None)
+        app._update_check_force_refresh = bool(var.get()) if var is not None else False
+    except Exception:
+        app._update_check_force_refresh = False
+
+    app._set_moddb_status(
+        f"Checking updates for {len(local)} mod(s) "
+        f"{'(force refresh) ' if app._update_check_force_refresh else ''}…")
     t = threading.Thread(
         target=app._update_check_worker,
         args=(local,),
@@ -1296,36 +1350,112 @@ def check_mod_updates(app: 'ServerManagerApp'):
     t.start()
 
 def _update_check_worker(app: 'ServerManagerApp', local_mods):
-    """For each local mod with a modid, query /api/mod/{modid} and
-    compare versions. Collect results; marshal back to UI thread."""
-    report = []
-    for info in local_mods:
+    """For each local mod with a modid, query /api/mod/{modid} via
+    the cached + parallelised path, compare versions, and collect
+    results. Marshals back to the UI thread.
+
+    Performance:
+      - Network calls are run via ThreadPoolExecutor with
+        ModDbClient.UPDATE_CHECK_PARALLELISM workers (default 8).
+      - get_mod_cached() consults the on-disk TTL cache first
+        (default 6h), so re-running the check inside the TTL
+        window costs zero network.
+      - The "Force refresh" checkbox in the Mods tab bypasses the
+        cache for one check; the helper sets
+        app._update_check_force_refresh.
+    """
+    import concurrent.futures
+
+    # Lazy-attach the cache the first time we need it. The path lives
+    # next to settings.json so it travels with portable installs.
+    try:
+        if getattr(app.moddb, "_mod_cache", None) is None:
+            from core.settings import settings_path
+            cache_path = os.path.join(
+                os.path.dirname(settings_path()), "moddb_cache.json")
+            app.moddb.attach_cache(cache_path)
+    except Exception:
+        # Cache attachment failure is non-fatal — fall through to
+        # per-call fetches.
+        pass
+
+    force = bool(getattr(app, "_update_check_force_refresh", False))
+
+    # Pre-pass: split mods that don't have a modid (no need to
+    # consume thread-pool slots on them).
+    no_modid = [info for info in local_mods if not info.get("modid")]
+    have_modid = [info for info in local_mods if info.get("modid")]
+
+    # Surface progress for cached vs. fetched as we go.
+    cache_hits = [0]
+    fetched    = [0]
+    def _progress():
+        done = cache_hits[0] + fetched[0]
+        app.after(0, app._set_moddb_status,
+                   f"Checking updates — {done}/{len(have_modid)} "
+                   f"({cache_hits[0]} cached, {fetched[0]} fetched)…")
+
+    def _check_one(info):
         modid = info.get("modid")
-        if not modid:
-            report.append({"info": info, "status": "no_modid"})
-            continue
         try:
-            detail = app.moddb.get_mod(modid)
+            had_cache = not force and app.moddb.has_fresh_cached(modid)
+            detail = app.moddb.get_mod_cached(modid, force_refresh=force)
+            if had_cache:
+                cache_hits[0] += 1
+            else:
+                fetched[0] += 1
+            _progress()
         except Exception as e:
-            report.append({"info": info, "status": "error", "error": str(e)})
-            continue
+            fetched[0] += 1
+            _progress()
+            return {"info": info, "status": "error", "error": str(e)}
         releases = _sorted_releases(detail.get("releases") or [])
         if not releases:
-            report.append({"info": info, "status": "no_releases",
-                           "detail": detail})
-            continue
-        latest = releases[0]  # truly newest after sort
+            return {"info": info, "status": "no_releases",
+                    "detail": detail}
+        latest     = releases[0]
         latest_ver = str(latest.get("modversion") or "")
-        local_ver = str(info.get("version") or "")
-        is_newer = app._version_is_newer(latest_ver, local_ver)
-        report.append({
+        local_ver  = str(info.get("version") or "")
+        is_newer   = app._version_is_newer(latest_ver, local_ver)
+        return {
             "info":       info,
             "detail":     detail,
             "latest":     latest,
             "latest_ver": latest_ver,
             "local_ver":  local_ver,
             "status":     "outdated" if is_newer else "current",
-        })
+        }
+
+    report = [{"info": info, "status": "no_modid"} for info in no_modid]
+    if have_modid:
+        # ModDbClient is thread-safe across separate get_mod calls
+        # (urllib.request is, and the SSL context is shared safely).
+        max_workers = max(1, getattr(
+            type(app.moddb), "UPDATE_CHECK_PARALLELISM", 8))
+        # Cap at the number of pending mods — no point spinning up
+        # 8 workers for 3 mods.
+        max_workers = min(max_workers, len(have_modid))
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix="vssm-modcheck") as ex:
+            futures = [ex.submit(_check_one, info) for info in have_modid]
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    report.append(fut.result())
+                except Exception as e:
+                    # _check_one shouldn't raise — anything getting here
+                    # is a logic bug, not a per-mod failure. Log it as
+                    # an "error" entry on a placeholder info dict so the
+                    # UI still surfaces it.
+                    report.append({"info": {"name": "(unknown)"},
+                                   "status": "error", "error": str(e)})
+
+    # Persist the cache so the next launch starts warm. Best-effort.
+    try:
+        app.moddb.save_cache()
+    except Exception:
+        pass
+
     app.after(0, app._show_update_report, report)
 
 def _show_update_report(app: 'ServerManagerApp', report):
