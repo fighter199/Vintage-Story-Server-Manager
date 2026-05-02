@@ -256,6 +256,15 @@ def parse_role_response(line: str):
 # JSON5-ish parser (strips comments + trailing commas, single-quoted strings)
 # -----------------------------------------------------------------------
 def parse_json5_ish(text: str):
+    # Strip a leading UTF-8 BOM if present. Python's json.loads
+    # rejects BOM-prefixed input outright, but several mod authors
+    # publish modinfo.json files that start with one (the Vintage
+    # Story game itself tolerates them), so we'd silently fail to
+    # read otherwise-valid modinfo.json from those mods. This also
+    # helps anything else read through this parser — serverconfig.json,
+    # vs_commands.json, exported rule files — for the same reason.
+    if text and text[:1] == "\ufeff":
+        text = text[1:]
     out = []
     i = 0
     n = len(text)

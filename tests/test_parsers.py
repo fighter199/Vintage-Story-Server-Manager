@@ -289,6 +289,35 @@ class TestParseJson5Ish:
     def test_single_quoted_strings(self):
         assert parse_json5_ish("{'a': 'hello'}") == {"a": "hello"}
 
+    def test_strips_utf8_bom(self):
+        # Pinned regression for the "mod silently skipped" bug:
+        # some mod authors publish modinfo.json with a UTF-8 BOM
+        # at the start. Python's json.loads rejects this; we strip
+        # it so the file parses normally.
+        text = "\ufeff" + '{"modid": "electricalindustry", "version": "0.6.1"}'
+        out = parse_json5_ish(text)
+        assert out == {"modid": "electricalindustry", "version": "0.6.1"}
+
+    def test_bom_with_crlf_line_endings(self):
+        # The original failing modinfo.json had Windows line endings
+        # AND a BOM. Both must be tolerated.
+        text = "\ufeff" + '{\r\n  "modid": "x",\r\n  "version": "1"\r\n}'
+        out = parse_json5_ish(text)
+        assert out == {"modid": "x", "version": "1"}
+
+    def test_no_bom_is_still_fine(self):
+        # Regression guard: ordinary JSON without a BOM still parses.
+        out = parse_json5_ish('{"a": 1}')
+        assert out == {"a": 1}
+
+    def test_only_strips_one_bom(self):
+        # A second U+FEFF inside the document is preserved — only the
+        # very first character is treated as a BOM.
+        text = "\ufeff" + '{"a": "x\ufeffy"}'
+        out = parse_json5_ish(text)
+        assert out == {"a": "x\ufeffy"}
+
+
 
 class TestParseCronExpr:
     def test_simple_time(self):
