@@ -99,16 +99,55 @@ def build_settings_tab(parent, app):
         ("Auto-restart on crash",  app.autorestart_var),
         ("Backup before start",    app.backup_before_start_var),
         ("Backup before stop",     app.backup_before_stop_var),
-        ("Auto-save enabled",      app.autosave_enabled_var),
-        ("Send /autosavenow with backup", app.autosave_cmd_var),
+        ("Periodic auto-backup",   app.autosave_enabled_var),
+        ("Save world before each auto-backup", app.autosave_cmd_var),
     ]:
         TermCheckbutton(pad, text, var, font_spec=app.F_NORMAL
                         ).pack(anchor=tk.W, padx=10, pady=(6, 0))
 
+    # ──────────────────────────────────────────────────────────────────
+    # Player-aware shutdown / restart guards (NEW)
+    # ──────────────────────────────────────────────────────────────────
+    # Section header so users can find the new options at a glance.
+    tk.Label(pad, text="Player-aware shutdown / restart:",
+             fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
+             font=app.F_SMALL).pack(anchor=tk.W, padx=10, pady=(14, 0))
+
+    # The three checkboxes the user requested. Each one gates a
+    # particular code path — see VSSM.py for the matching behaviour:
+    #   * restart  → wraps restart_server() with a confirm dialog
+    #   * scheduled→ wraps _cron_fire() to delay until the server's empty
+    #   * shutdown → wraps stop_server() with a confirm dialog
+    TermCheckbutton(pad, "Check for players before manual restart",
+                    app.check_players_before_restart_var,
+                    font_spec=app.F_NORMAL
+                    ).pack(anchor=tk.W, padx=10, pady=(6, 0))
+    TermCheckbutton(pad, "Check for players before scheduled restart",
+                    app.check_players_before_scheduled_restart_var,
+                    font_spec=app.F_NORMAL
+                    ).pack(anchor=tk.W, padx=10, pady=(6, 0))
+    TermCheckbutton(pad, "Check for players before manual shutdown",
+                    app.check_players_before_shutdown_var,
+                    font_spec=app.F_NORMAL
+                    ).pack(anchor=tk.W, padx=10, pady=(6, 0))
+
+    tk.Label(
+        pad,
+        text=(
+            "When enabled, manual restarts/shutdowns will warn you if "
+            "players are online and let you choose to wait until the "
+            "server is empty or proceed anyway. Scheduled restarts "
+            "will silently delay until no players are online (warnings "
+            "are still broadcast at the original time)."
+        ),
+        fg=Theme.MUTED, bg=Theme.BG_PANEL,
+        font=app.F_SMALL, justify=tk.LEFT, wraplength=620,
+    ).pack(anchor=tk.W, padx=10, pady=(2, 0))
+
     # Auto-save interval
     row2 = tk.Frame(pad, bg=Theme.BG_PANEL)
     row2.pack(fill=tk.X, padx=10, pady=(6, 0))
-    tk.Label(row2, text="Auto-save every (min):", fg=Theme.AMBER_DIM,
+    tk.Label(row2, text="Auto-backup every (min):", fg=Theme.AMBER_DIM,
              bg=Theme.BG_PANEL, font=app.F_SMALL).pack(side=tk.LEFT)
     TermEntry(row2, textvariable=app.autosave_interval_var, width=5,
               font_spec=app.F_NORMAL).pack(side=tk.LEFT, padx=6)

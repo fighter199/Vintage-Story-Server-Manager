@@ -84,6 +84,74 @@ def parse_chat_with_group(line: str, strip_fn: Callable[[str], str] | None = Non
 
 
 # -----------------------------------------------------------------------
+# Ungrouped chat (no group ID, no Player: form) — proximity / RP mods
+# -----------------------------------------------------------------------
+# Special group key for chat lines that have neither a numeric
+# group prefix nor a 'Player: message' form. Reserved so it can't
+# collide with a real group ID (which is always digit-only).
+UNGROUPED_KEY = "__ungrouped__"
+
+# Pattern for Player VERB "quoted message" shapes emitted by the
+# Roleplay (RP) Proximity Chat mod and similar. Matches things
+# like:  Dan mentions "hello" / Dan states "..." / Dan exclaims "!"
+# The verb is captured but isn't restricted to a fixed list — any
+# single alphabetic word works, as long as the message is enclosed
+# in matching double quotes. Greedy ".*" so messages that contain
+# inner quotes (a real case in the user's log) match fully to the
+# trailing quote at end of line.
+_RE_CHAT_UNGROUPED = re.compile(
+    r'^\s*([A-Za-z0-9_\-\.]+)\s+'        # player name
+    r'([a-z]+)\s+'                       # verb word
+    r'"(.*)"\s*$',                       # quoted message
+    re.I,
+)
+
+# Cheap rejection pattern: a 'Player: msg' line (no group prefix)
+# should NOT be claimed by the ungrouped parser — those fall
+# through to the existing parse_chat_message path used by the
+# custom-commands dispatcher.
+_RE_PLAIN_COLON = re.compile(
+    r'^\s*[A-Za-z0-9_\-\.]+\s*:\s*',
+    re.I,
+)
+
+
+def parse_ungrouped_chat(line, strip_fn=None):
+    """Return (verb, player, message) or (None, None, None).
+
+    Targets [Server Chat] lines that have neither a numeric group
+    prefix nor a 'Player: message' form. Used for proximity /
+    roleplay mods that emit lines like:
+
+        Dan mentions \"Hello there\"
+        Dan states \"This is proximity yelling.\"
+        Dan exclaims \"This is proximity yelling!\"
+
+    Defensive ordering — rejects any line that looks like a
+    grouped colon form OR a plain 'Player: message' first, so
+    the existing parsers retain priority for shapes they handle.
+    """
+    if not line:
+        return (None, None, None)
+    if ("[Chat]" not in line
+            and "[CHAT]" not in line
+            and "Server Chat" not in line):
+        return (None, None, None)
+    s = strip_fn(line) if strip_fn else line
+    # Don't claim anything the grouped parser already handles.
+    if _RE_CHAT_GROUPED.search(s):
+        return (None, None, None)
+    # Don't claim plain 'Player: message' — that goes through
+    # the existing parse_chat_message for custom-command dispatch.
+    if _RE_PLAIN_COLON.search(s):
+        return (None, None, None)
+    m = _RE_CHAT_UNGROUPED.search(s)
+    if not m:
+        return (None, None, None)
+    return m.group(2).lower(), m.group(1), m.group(3).strip()
+
+
+# -----------------------------------------------------------------------
 # Entry + store
 # -----------------------------------------------------------------------
 @dataclass
@@ -215,6 +283,8 @@ class ChatLogStore:
             return self._names[gid]
         if gid == "0":
             return "General"
+        if gid == UNGROUPED_KEY:
+            return "Ungrouped / Proximity"
         return f"Group {gid}"
 
     def set_name(self, group_id: str, name: str) -> None:

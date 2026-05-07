@@ -78,7 +78,8 @@ from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                          panel_header, collapsible_section, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
 from ui.tab_chat_log import ChatLogTab
-from core.chat_log import ChatLogStore, parse_chat_with_group
+from core.chat_log import (ChatLogStore, parse_chat_with_group,
+                            parse_ungrouped_chat, UNGROUPED_KEY)
 from core.settings import chat_log_path
 from core.player_timers import PlayerTimers, fmt_duration
 from core.settings import load_player_totals
@@ -382,6 +383,15 @@ class ServerManagerApp(tk.Tk):
         self.autosave_cmd_var         = tk.BooleanVar(value=True)
         self.autorestart_var          = tk.BooleanVar()
         self.restart_interval_var     = tk.StringVar()
+        # Player-aware restart/shutdown guards — controlled by the
+        # three checkboxes added to the Settings tab. Default off so
+        # behaviour is unchanged for existing users.
+        self.check_players_before_restart_var           = tk.BooleanVar(value=False)
+        self.check_players_before_scheduled_restart_var = tk.BooleanVar(value=False)
+        self.check_players_before_shutdown_var          = tk.BooleanVar(value=False)
+        # State for a deferred scheduled restart (waiting for empty server)
+        self._deferred_restart_poll_id: Optional[str] = None
+        self._deferred_restart_active: bool           = False
         self.mods_folder_var          = tk.StringVar()
         self.config_file_path         = None
         self.cron_expr_var            = tk.StringVar(value="")
@@ -1663,6 +1673,11 @@ class ServerManagerApp(tk.Tk):
         profile["shutdown_timeout"]  = self.shutdown_timeout_var.get()
         profile["backup_before_start"] = self.backup_before_start_var.get()
         profile["backup_before_stop"]  = self.backup_before_stop_var.get()
+        # Player-aware guards (per-profile so each server config can
+        # have its own policy).
+        profile["check_players_before_restart"]           = self.check_players_before_restart_var.get()
+        profile["check_players_before_scheduled_restart"] = self.check_players_before_scheduled_restart_var.get()
+        profile["check_players_before_shutdown"]          = self.check_players_before_shutdown_var.get()
         # Crash-loop config (improvement #15)
         try:
             self.CRASH_LIMIT = int(self._crash_limit_var.get())
@@ -1700,6 +1715,15 @@ class ServerManagerApp(tk.Tk):
         self.shutdown_timeout_var.set(profile.get("shutdown_timeout", "30"))
         self.backup_before_start_var.set(profile.get("backup_before_start", False))
         self.backup_before_stop_var.set(profile.get("backup_before_stop", False))
+        # Player-aware guards (default off when missing — preserves
+        # the old behaviour for settings files written before this
+        # feature existed).
+        self.check_players_before_restart_var.set(
+            profile.get("check_players_before_restart", False))
+        self.check_players_before_scheduled_restart_var.set(
+            profile.get("check_players_before_scheduled_restart", False))
+        self.check_players_before_shutdown_var.set(
+            profile.get("check_players_before_shutdown", False))
         srv = profile.get("server_path", "")
         if srv:
             self.server_path_var.set(srv)
@@ -1920,7 +1944,15 @@ class ServerManagerApp(tk.Tk):
         self._schedule_autosave()
         self._apply_cron_schedule()
 
-    def stop_server(self, on_done: Callable | None = None):
+    def stop_server(self, on_done: Callable | None = None,
+                    skip_player_check: bool = False):
+        """Stop the server.
+
+        skip_player_check: if True, bypass the
+        'Check for players before manual shutdown' guard. Used by
+        restart_server (which has its own guard) and the close-window
+        path (which already prompts the user separately).
+        """
         if not self.is_running and not self.server_process:
             if on_done:
                 on_done()
@@ -1928,6 +1960,21 @@ class ServerManagerApp(tk.Tk):
         if self._shutdown_in_progress:
             if on_done:
                 self._shutdown_callbacks.append(on_done)
+            return
+        # Guard: ask the user what to do when players are online.
+        # We check this BEFORE registering the callback so that if the
+        # user cancels, we don't leave a stale on_done waiting.
+        if (not skip_player_check
+                and self.check_players_before_shutdown_var.get()
+                and self._players):
+            self._prompt_players_online_action(
+                action_label="shutdown",
+                on_continue_now=lambda: self.stop_server(
+                    on_done=on_done, skip_player_check=True),
+                on_wait_until_empty=lambda: self._wait_for_empty_then(
+                    lambda: self.stop_server(
+                        on_done=on_done, skip_player_check=True),
+                    action_label="shutdown"))
             return
         if on_done:
             self._shutdown_callbacks.append(on_done)
@@ -2007,11 +2054,33 @@ class ServerManagerApp(tk.Tk):
                 pass
 
     def restart_server(self):
+        """Public restart entry-point. Honors the
+        'Check for players before manual restart' setting."""
         if not self.is_running:
             self._notify("Server is not running.", level="warn")
             return
+        # Guard: ask the user what to do when players are online.
+        if (self.check_players_before_restart_var.get()
+                and self._players):
+            self._prompt_players_online_action(
+                action_label="restart",
+                on_continue_now=self._do_restart_now,
+                on_wait_until_empty=lambda: self._wait_for_empty_then(
+                    self._do_restart_now, action_label="restart"))
+            return
+        self._do_restart_now()
+
+    def _do_restart_now(self):
+        """Unconditional restart — bypasses the player-check guard.
+        Called either directly (when the guard is off / no players)
+        or after the user picks 'continue anyway' / once the server
+        is empty."""
+        if not self.is_running:
+            return
         self.append_console("Restarting server…", "system")
-        self.stop_server(on_done=lambda: self.after(2000, self.start_server))
+        self.stop_server(
+            skip_player_check=True,
+            on_done=lambda: self.after(2000, self.start_server))
 
     def _update_buttons_running(self, running: bool, shutting_down: bool = False):
         if shutting_down:
@@ -2150,10 +2219,10 @@ class ServerManagerApp(tk.Tk):
         # it handles the angle-bracket form for custom-command dispatch.
         try:
             if tag == "chat":
-                gid, p, m = parse_chat_with_group(
-                    raw, strip_fn=__import__("core.parsers",
-                                              fromlist=["strip_log_prefix"]
-                                              ).strip_log_prefix)
+                strip_fn = __import__("core.parsers",
+                                      fromlist=["strip_log_prefix"]
+                                      ).strip_log_prefix
+                gid, p, m = parse_chat_with_group(raw, strip_fn=strip_fn)
                 if gid is not None and p and self._chat_log_tab is not None:
                     import time as _t
                     now = _t.time()
@@ -2164,6 +2233,25 @@ class ServerManagerApp(tk.Tk):
                     # so this is mostly defensive.
                     self.after_idle(
                         self._chat_log_tab.on_new_entry, gid, p, m or "", now)
+                else:
+                    # No group ID — try the ungrouped parser for
+                    # proximity / RP-mod chat shapes like
+                    # 'Dan mentions "hello"'. The verb is folded
+                    # into the rendered message so the roleplay
+                    # flavor (mentions / states / exclaims / …) is
+                    # preserved without a schema change.
+                    verb, p2, body = parse_ungrouped_chat(
+                        raw, strip_fn=strip_fn)
+                    if p2 and self._chat_log_tab is not None:
+                        import time as _t
+                        now = _t.time()
+                        rendered = (f"{verb} {body}"
+                                    if verb else body)
+                        self._chat_store.append(
+                            UNGROUPED_KEY, p2, rendered, now=now)
+                        self.after_idle(
+                            self._chat_log_tab.on_new_entry,
+                            UNGROUPED_KEY, p2, rendered, now)
         except Exception:
             LOG.exception("chat log capture failed")
         try:
@@ -2753,8 +2841,41 @@ class ServerManagerApp(tk.Tk):
         if not self.is_running:
             self._schedule_next_cron()
             return
+        # If the user opted in to deferring scheduled restarts when
+        # players are online, hand off to the wait-loop instead of
+        # firing immediately. The wait-loop polls _players and runs
+        # the restart as soon as the list is empty.
+        if (self.check_players_before_scheduled_restart_var.get()
+                and self._players):
+            self.append_console(
+                f"Scheduled restart deferred — {len(self._players)} "
+                f"player(s) online. Will fire once the server is empty.",
+                "warn")
+            self._notify(
+                "Scheduled restart deferred until empty.",
+                level="info", duration_ms=4000)
+            try:
+                self.broadcast(
+                    "Scheduled restart deferred until all players "
+                    "have logged off.")
+            except Exception:
+                pass
+            self._wait_for_empty_then(
+                self._cron_fire_now, action_label="scheduled restart")
+            return
+        self._cron_fire_now()
+
+    def _cron_fire_now(self):
+        """Fire a scheduled restart immediately, then schedule the
+        next cron tick. Bypasses the manual-restart player-check
+        guard since the cron path has its own wait-for-empty logic."""
+        if not self.is_running:
+            self._schedule_next_cron()
+            return
         self.append_console("Scheduled restart firing…", "system")
-        self.restart_server()
+        # Use _do_restart_now so we don't double-prompt the user;
+        # the cron path's player-check is the deferral above.
+        self._do_restart_now()
         self.after(10000, self._schedule_next_cron)
 
     def _cancel_cron_schedule(self):
@@ -2765,6 +2886,113 @@ class ServerManagerApp(tk.Tk):
                 pass
             self._cron_job_id = None
         self._cancel_restart_warnings()
+        # Also cancel any deferred-restart wait that's still running.
+        self._cancel_deferred_restart_wait()
+
+    # ------------------------------------------------------------------
+    # Player-aware restart/shutdown guards (NEW)
+    # ------------------------------------------------------------------
+    def _prompt_players_online_action(
+        self,
+        action_label: str,
+        on_continue_now: Callable[[], None],
+        on_wait_until_empty: Callable[[], None],
+    ) -> None:
+        """Show a 3-button dialog when the user triggers a manual
+        restart/shutdown while players are online.
+
+        Buttons:
+          Yes  → wait until server is empty, then perform the action
+          No   → perform the action immediately
+          Cancel → do nothing
+        """
+        n = len(self._players)
+        # Build a short list of names for the prompt — cap at 6 so the
+        # dialog stays readable on a 100-player server.
+        names_preview = ", ".join(self._players[:6])
+        if n > 6:
+            names_preview += f", … (+{n - 6} more)"
+        title = f"Players online — {action_label}"
+        body = (
+            f"{n} player{'s' if n != 1 else ''} currently online:\n"
+            f"  {names_preview}\n\n"
+            f"Yes  →  Wait until the server is empty, then {action_label}\n"
+            f"No   →  {action_label.capitalize()} now anyway\n"
+            f"Cancel →  Don't {action_label}"
+        )
+        # askyesnocancel returns True / False / None
+        choice = messagebox.askyesnocancel(title, body, parent=self)
+        if choice is None:
+            self.append_console(
+                f"{action_label.capitalize()} cancelled by user.", "system")
+            return
+        if choice:
+            on_wait_until_empty()
+        else:
+            on_continue_now()
+
+    def _wait_for_empty_then(
+        self,
+        action: Callable[[], None],
+        action_label: str = "action",
+        poll_interval_ms: int = 5000,
+    ) -> None:
+        """Poll _players every `poll_interval_ms` ms; when empty, run
+        `action`. Cancels any previous deferred wait first so we never
+        end up with two of these running at once."""
+        self._cancel_deferred_restart_wait()
+        self._deferred_restart_active = True
+        self.append_console(
+            f"Waiting for empty server before {action_label} "
+            f"({len(self._players)} online)…",
+            "system")
+        self._notify(
+            f"{action_label.capitalize()} pending — waiting for empty server.",
+            level="info", duration_ms=4000)
+
+        def _tick():
+            self._deferred_restart_poll_id = None
+            if not self._deferred_restart_active:
+                return  # cancelled
+            if not self.is_running:
+                # Server died on us — abort the deferred action.
+                self.append_console(
+                    f"Deferred {action_label} aborted: server stopped.",
+                    "warn")
+                self._deferred_restart_active = False
+                return
+            if not self._players:
+                self._deferred_restart_active = False
+                self.append_console(
+                    f"Server empty — proceeding with {action_label}.",
+                    "system")
+                try:
+                    action()
+                except Exception:
+                    LOG.exception("deferred %s failed", action_label)
+                return
+            # Still players online — nudge the player list and poll again.
+            try:
+                self._send_internal_command("/list clients")
+            except Exception:
+                pass
+            self._deferred_restart_poll_id = self.after(
+                poll_interval_ms, _tick)
+
+        # First tick scheduled immediately so we react to a server
+        # that's already empty by the time the user clicked Yes.
+        self._deferred_restart_poll_id = self.after(0, _tick)
+
+    def _cancel_deferred_restart_wait(self) -> None:
+        """Stop polling for an empty server, if a deferred action is
+        currently waiting. Safe to call any time."""
+        self._deferred_restart_active = False
+        if self._deferred_restart_poll_id is not None:
+            try:
+                self.after_cancel(self._deferred_restart_poll_id)
+            except Exception:
+                pass
+            self._deferred_restart_poll_id = None
 
     # ------------------------------------------------------------------
     # ModDB catalogs async init
@@ -3033,8 +3261,12 @@ class ServerManagerApp(tk.Tk):
             self.cancel_autosave_job()
             self._cancel_cron_schedule()
             self._cancel_restart_warnings()
+            self._cancel_deferred_restart_wait()
             self._set_status("SHUTTING DOWN", dot="stopping")
-            self.stop_server(on_done=self._final_destroy)
+            # Skip the player-check guard here — the user already
+            # confirmed the close-window prompt, no need to ask again.
+            self.stop_server(on_done=self._final_destroy,
+                             skip_player_check=True)
             return
         self.cancel_autosave_job()
         self._cancel_cron_schedule()
