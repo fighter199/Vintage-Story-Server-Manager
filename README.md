@@ -2,10 +2,26 @@
 
 A modular rewrite of the v2 monolithic single-file application. The
 ~7,500-line monolith is now a properly structured package with type
-hints, unit tests, and a **Custom Commands** tab that lets server
-owners define chat triggers (e.g. `!warp`, `!day`, `!give`) that fire
-console commands — gated by player role, throttled by per-player
-cooldown, and audited in a panel that shows every fire and skip.
+hints, unit tests, a **Custom Commands** tab that lets server owners
+define chat triggers (e.g. `!warp`, `!day`, `!give`) gated by player
+role and per-player cooldown, an **Autorun** tab that fires console
+commands on a fixed interval while the server is up, an in-app
+**ModDB** browser with parallel cached update checks, per-player
+session/lifetime playtime tracking, and a **CHAT LOG** tab with
+proximity / RP-mod chat support.
+
+## How updates work — patchers are the canonical delivery mechanism
+
+> **Code and feature updates are shipped as patcher scripts, not as
+> drop-in replacement files.** When a new feature lands you'll get
+> an `apply_*_patch.py` script that surgically modifies your existing
+> install. Patchers are preferred over file replacement because they
+> preserve local edits, are reversible (every modified file gets a
+> timestamped `.bak`), and refuse to run if anything looks off.
+
+See the **[Patcher scripts](#patcher-scripts)** section below for the
+conventions every patcher follows and the list of patchers shipped in
+the current iteration.
 
 ## Running
 
@@ -13,7 +29,7 @@ cooldown, and audited in a panel that shows every fire and skip.
 cd vssm
 python VSSM.py                  # normal launch  (use `py -3 VSSM.py` on Windows)
 python VSSM.py --log-level DEBUG
-python run_tests.py             # 182-test suite, no pytest needed
+python run_tests.py             # full test suite, no pytest needed
 ```
 
 ## Installing dependencies
@@ -49,10 +65,11 @@ distro-specific `python3-tk` instructions for Linux.
 
 ```
 vssm/
-├── VSSM.py           ← entry point + ServerManagerApp class
+├── VSSM.py                 ← entry point + ServerManagerApp class
 ├── run_tests.py            ← pytest-free test runner
 ├── requirements.txt
 ├── README.md
+├── apply_*_patch.py        ← patcher scripts (see Patcher scripts section)
 ├── core/
 │   ├── constants.py        APP_NAME, APP_VERSION, logging, OPERATOR_ROLES
 │   ├── parsers.py          classify_line, parse_player_event,
@@ -65,6 +82,10 @@ vssm/
 │   │                       UNGROUPED_KEY for proximity / RP-mod chat
 │   ├── custom_commands.py  ChatCommandDispatcher engine, AuditRecord,
 │   │                       cooldown tracker, destructive-keyword guard
+│   ├── autorun.py          AutorunScheduler — interval-based command runner,
+│   │                       AutorunAudit, rule validation
+│   ├── player_timers.py    PlayerTimers — session + lifetime playtime,
+│   │                       fmt_duration display helper
 │   └── utils.py            port check, backup zip + testzip,
 │                           clean_mod_filename, fmt_size, DPI awareness
 ├── ui/
@@ -72,8 +93,8 @@ vssm/
 │   ├── widgets.py          TermButton, TermEntry, Sparkline, ScrollableFrame,
 │   │                       ToastQueue (queued, non-overlapping toasts)
 │   ├── tab_custom_commands.py   CUSTOM CMDS tab — full editor + audit panel
+│   ├── tab_autorun.py      AUTORUN tab — interval rule editor + audit strip
 │   ├── tab_chat_log.py     CHAT LOG tab — per-group + Ungrouped / Proximity
-│   │                       (added by apply_chat_log_patches.py)
 │   ├── tab_mods.py         Mods tab + ModDB browser + update picker dialog
 │   ├── tab_commands.py     COMMANDS tab — VS command reference
 │   ├── tab_settings.py     SETTINGS tab — paths, scheduling, theme,
@@ -85,13 +106,16 @@ vssm/
 │   └── manager.py          BackupManager — async zip + retention
 ├── mods/
 │   ├── inspector.py        LocalModInspector (modinfo from zip/dir/cs/dll)
-│   └── moddb.py            ModDbClient (ModDB REST API, on-disk TTL cache)
-└── tests/                  182 tests for all pure modules
+│   ├── moddb.py            ModDbClient (ModDB REST API)
+│   └── moddb_cache.py      ModDbCache — on-disk TTL cache for get_mod
+└── tests/                  pytest-style suite for all pure modules
     ├── conftest.py
     ├── test_parsers.py     log-line classification, cron, version compare
     ├── test_custom_commands.py   trigger matching, args, cooldowns,
     │                             roles, destructive-guard, audit hooks
-    ├── test_settings.py    schema migration v1→v4, per-profile rules,
+    ├── test_autorun.py     scheduler ticks, intervals, gates, audit
+    ├── test_player_timers.py  session/total accumulation, flush logic
+    ├── test_settings.py    schema migration v1→v7, per-profile rules,
     │                       import/export, atomic save
     └── test_utils.py       fmt_size, sanitize, mod-filename cleaning
 ```
@@ -124,7 +148,7 @@ vssm/
 
 | #  | Improvement                                                       | Status |
 |----|-------------------------------------------------------------------|--------|
-| 1  | Unit tests — 155 cases across 4 test modules                      | ✓ |
+| 1  | Unit tests across pure-logic modules                              | ✓ |
 | 2  | `backup/` extraction — `BackupManager` class                      | ✓ |
 | 3  | Tab extraction — every `_build_*_tab` lives in `ui/tab_*.py`      | ✓ |
 | 4  | Per-rule cooldowns, tracked per (rule, player)                    | ✓ |
@@ -138,7 +162,7 @@ vssm/
 | 12 | Import / export rules as JSON                                     | ✓ |
 | 13 | Live trigger preview — runs the dispatcher against a sample player| ✓ |
 
-### Third pass (this iteration)
+### Third pass
 
 | #   | Improvement                                                       | Status |
 |-----|-------------------------------------------------------------------|--------|
@@ -153,15 +177,18 @@ vssm/
 | 22  | On-disk TTL cache for `moddb.get_mod` (`get_mod_cached`)          | ✓ |
 | 23  | Atomic mod download — `.part` + `os.replace()` rename             | ✓ |
 
-### File-size wins from extraction
+### Fourth pass (this iteration)
 
-- `VSSM.py`: 7,491 → 4,121 → 3,997 → 3,732 → 2,479 → **3,595** lines
-  (the third-pass features added the player-check helpers and assorted
-  glue back into the host class — still less than half of v2)
-- `ui/tab_mods.py`: 1,500 → **1,786** lines (picker dialog + bulk-update
-  runner are the bulk of the growth; the parallel/cached worker also
-  added a small amount)
-- Backup logic: 200 lines moved to `backup/manager.py`
+| #   | Improvement                                                       | Status |
+|-----|-------------------------------------------------------------------|--------|
+| 24  | AUTORUN tab — interval-based console-command rules per profile    | ✓ |
+| 25  | `core/autorun.py` — testable scheduler with injectable clock/send | ✓ |
+| 26  | Run-on-start, run-on-save, pause-when-empty rule gates            | ✓ |
+| 27  | ▶ Run Now button — fire saved rule once + reset interval          | ✓ |
+| 28  | Per-player session + lifetime playtime tracking (`PlayerTimers`)  | ✓ |
+| 29  | 1Hz in-place label updates on player rows (no row rebuild)        | ✓ |
+| 30  | Periodic flush of active sessions (≤60s loss on crash)            | ✓ |
+| 31  | Schema v7 migration — `autorun_rules` + `player_totals` per profile | ✓ |
 
 ## The Custom Commands tab
 
@@ -224,12 +251,12 @@ with the existing rules or replace them entirely. The import path
 runs every rule through `validate_rule`, so a malformed file is rejected
 with a clear error before anything is written.
 
-### Per-profile rules (schema v4)
+### Per-profile rules
 
 Each profile owns its own rule list. Switching profiles in Settings
 swaps the active rule set instantly — useful for running e.g. a
 `creative` profile with `!gm 1` and a `survival` profile without it.
-Existing v3 settings files are auto-migrated on first launch (with a
+Existing settings files are auto-migrated on first launch (with a
 pre-migration `.bak` saved alongside).
 
 ### Rule schema
@@ -244,6 +271,91 @@ pre-migration `.bak` saved alongside).
   "confirmed_destructive": false
 }
 ```
+
+## The Autorun tab
+
+Reachable from the sidebar as **AUTORUN**. Each rule fires its
+configured console commands every N seconds while the server is
+running. Rules are per-profile and persist alongside custom commands.
+
+### Rule fields
+
+- **Name** — human-readable label, also the dedup key for the
+  scheduler.
+- **Enabled** — toggle without deleting.
+- **Interval** — value + unit (seconds / minutes / hours). The UI
+  picks the largest unit that divides cleanly when displaying the
+  saved value.
+- **Commands** — multi-line text, one console command per line. Lines
+  starting with `#` are treated as comments and skipped.
+- **Run on start** — fire once when the server starts, then resume
+  the normal interval cadence.
+- **Run on save** — fire once whenever the rule is saved, and reset
+  the next-fire deadline so the periodic cadence re-anchors to
+  save-time. Useful for "I just edited the broadcast text — run it
+  now and re-time the every-15-min cadence."
+- **Pause when empty** — skip ticks while 0 players are online. The
+  next tick still gets scheduled normally; it just doesn't send.
+
+### ▶ Run Now button
+
+A one-shot fire of the **saved** state of the selected rule. The
+interval is reset, so the next periodic fire is `interval_secs` from
+now. Note that Run Now ignores unsaved editor changes — to fire your
+in-progress edits, hit 💾 Save (which honours the *Run on save*
+checkbox).
+
+### Audit strip
+
+The bottom of the tab shows the most recent scheduler decisions:
+fires, gates that blocked a fire (disabled, paused, server down), and
+the reason for each skip. Same look-and-feel as the Custom Commands
+audit panel.
+
+### Scheduler design
+
+`core/autorun.py::AutorunScheduler` is fully decoupled from the UI:
+rules are plain dicts (round-trip through settings JSON), and time
+plus side-effects are injected via a `clock` and `send` callable —
+which makes the engine trivially unit-testable without Tk or a real
+server process. Intervals are measured from server start, so they
+don't drift across restarts.
+
+### Rule schema
+
+```json
+{
+  "name":             "Hourly broadcast",
+  "enabled":          true,
+  "interval_secs":    3600,
+  "commands":         "/announce Welcome to the server!\n# this line is a comment\n/autosavenow",
+  "run_on_start":     true,
+  "run_on_save":      false,
+  "pause_when_empty": true
+}
+```
+
+## Player playtime tracking
+
+Every player row in the sidebar shows two timers:
+
+- **🕐 session** — wall-clock time since this player's most recent
+  join. Resets to 0 each time they leave and rejoin.
+- **Σ total** — cumulative time across every session ever recorded.
+  Persisted to settings so it survives VSSM restarts.
+
+Both update in place at 1Hz with no row rebuild — the labels are
+held by reference and re-textured. Right-click a player row to see
+"Reset playtime" and "Forget player" options.
+
+`core/player_timers.py::PlayerTimers` is engine-only (no Tk, no I/O).
+The host calls `record_join` / `record_leave` on player events and
+`flush()` once per minute (and at shutdown), so a crash loses at most
+~60 s of playtime. Player names are case-preserved exactly as the
+server reports them — VS player names are case-sensitive.
+
+Storage lives per-profile under `player_totals` in
+`vserverman_settings.json`.
 
 ## Player-aware shutdown / restart guards
 
@@ -386,9 +498,10 @@ path; `.part` files are cleaned up on error.
 ## Tests
 
 The test suite covers the pure logic modules (parsers, custom-commands
-engine, settings layer, utility helpers, chat-log store). UI code is
-intentionally not exercised — Tk testing is fragile and slow, and the
-value-per-line is much higher in the engine.
+engine, autorun scheduler, player timers, settings layer, utility
+helpers, chat-log store). UI code is intentionally not exercised — Tk
+testing is fragile and slow, and the value-per-line is much higher in
+the engine.
 
 ```bash
 # Without pytest (pure stdlib)
@@ -422,11 +535,17 @@ falls through to `parse_ungrouped_chat` for `Player VERB "message"`
 shapes from proximity / RP mods. Both feed the `ChatLogStore` ring
 buffer (default 500 lines per group) which persists across launches.
 
+The autorun scheduler runs on a separate 1Hz `after()` tick on the
+host, independent of incoming chat — it only consults the rule list
+and the player count, so it has no entanglement with the parser path.
+
 ## Patcher scripts
 
-A handful of `apply_*_patch.py` scripts are shipped alongside the
-codebase to apply incremental changes to an existing install. Each
-follows the same conventions:
+**Patchers are the canonical way to deliver code and feature updates
+to an existing VSSM install.** Rather than shipping replacement
+files (which would clobber any local edits), each new feature lands
+as an `apply_*_patch.py` script that surgically modifies the relevant
+files. Every patcher follows the same conventions:
 
 - **Idempotent** — re-running detects a marker string and exits clean.
 - **Pre-flight verification** — every search snippet must match
@@ -440,16 +559,51 @@ follows the same conventions:
   preserved on write.
 - **`--dry-run`** — verify everything would patch without writing.
 
-Exit codes: `0` (applied or already applied), `1` (bad path / files
-missing / prerequisite missing), `2` (snippet mismatch), `3`
-(post-patch syntax error → rolled back).
+### Running a patcher
 
-The patchers in this iteration:
+```bash
+cd vssm
+python apply_<feature>_patch.py            # apply for real
+python apply_<feature>_patch.py --dry-run  # verify only, no writes
+```
+
+Always run patchers from the VSSM package root (the directory that
+contains `VSSM.py`).
+
+### Exit codes
+
+| Code | Meaning                                                      |
+|------|--------------------------------------------------------------|
+| `0`  | Applied successfully, OR already applied (idempotent).       |
+| `1`  | Bad path / files missing / prerequisite patcher not run.     |
+| `2`  | Snippet mismatch — file content doesn't match expectations.  |
+| `3`  | Post-patch syntax error → automatic rollback from backup.    |
+
+### Recovering from a failed patch
+
+If a patcher exits non-zero, no permanent changes have been made:
+
+- Exit `2` (snippet mismatch) means nothing was written; investigate
+  why your file diverges from the expected baseline (likely a missing
+  prerequisite patcher, or local edits that need rebasing).
+- Exit `3` (syntax error) means the patcher already rolled back the
+  file from its backup. The `.<stamp>.bak` files are kept around
+  regardless, so you can also restore manually if needed.
+
+### Patchers in the current iteration
 
 | Patcher                                       | Adds                                       |
 |-----------------------------------------------|--------------------------------------------|
 | `apply_player_check_patch.py`                 | Player-aware restart/shutdown guards       |
 | `apply_ungrouped_chat_patch.py`               | Ungrouped / Proximity subtab in CHAT LOG   |
+| `apply_chat_log_patches.py`                   | CHAT LOG tab (per-group history)           |
 | `apply_autosave_relabel_patch.py`             | Renames "Auto-save" → "Periodic auto-backup" |
 | `apply_mod_update_picker_patch.py`            | Per-mod selection picker dialog            |
 | `apply_mod_updater_polish_v2_patch.py`        | Canonical comparator + GAME VER filter + cancel/progress (run AFTER picker) |
+| `apply_autorun_patch.py`                      | AUTORUN tab + scheduler                    |
+| `apply_player_timers_patch.py`                | Per-player session + lifetime playtime tracking |
+
+> **Run order matters where a patcher depends on another.** The mod
+> updater polish patch, for instance, expects the picker dialog to
+> already be in place — running it first will fail pre-flight with
+> exit code 2, so you'll know to apply the picker patch first.
