@@ -1,10 +1,11 @@
-# VSSM — Vintage Story Server Manager
+# VSSM v3 — Vintage Story Server Manager
 
-A modular Python/Tkinter app for running and operating a Vintage Story
-dedicated server: start/stop/restart, live console, mods management
-with ModDB integration, scheduled restarts, world backups, custom chat
-commands, interval-based autorun jobs, per-group chat archive, and
-session/lifetime playtime tracking.
+A modular rewrite of the v2 monolithic single-file application. The
+~7,500-line monolith is now a properly structured package with type
+hints, unit tests, and a **Custom Commands** tab that lets server
+owners define chat triggers (e.g. `!warp`, `!day`, `!give`) that fire
+console commands — gated by player role, throttled by per-player
+cooldown, and audited in a panel that shows every fire and skip.
 
 ## Running
 
@@ -12,7 +13,7 @@ session/lifetime playtime tracking.
 cd vssm
 python VSSM.py                  # normal launch  (use `py -3 VSSM.py` on Windows)
 python VSSM.py --log-level DEBUG
-python run_tests.py             # 300+ tests, no pytest needed
+python run_tests.py             # 182-test suite, no pytest needed
 ```
 
 ## Installing dependencies
@@ -48,30 +49,22 @@ distro-specific `python3-tk` instructions for Linux.
 
 ```
 vssm/
-├── VSSM.py                 ← entry point + ServerManagerApp class
+├── VSSM.py           ← entry point + ServerManagerApp class
 ├── run_tests.py            ← pytest-free test runner
 ├── requirements.txt
 ├── README.md
 ├── core/
-│   ├── constants.py        APP_NAME, APP_VERSION, logging, OPERATOR_ROLES,
-│   │                       SETTINGS_SCHEMA_VERSION (currently 7)
-│   ├── parsers.py          classify_line, parse_player_event (handles
-│   │                       multi-line /list clients + got-removed),
-│   │                       parse_chat_message (both VS chat formats),
-│   │                       parse_cron_expr, version_is_newer,
-│   │                       parse_json5_ish
+│   ├── constants.py        APP_NAME, APP_VERSION, logging, OPERATOR_ROLES
+│   ├── parsers.py          classify_line, parse_player_event,
+│   │                       parse_chat_message, parse_chat_with_group,
+│   │                       parse_ungrouped_chat, parse_cron_expr,
+│   │                       version_is_newer, parse_json5_ish
 │   ├── settings.py         load/save/migrate (atomic + pre-migration .bak),
-│   │                       per-profile rules, autorun, player totals,
-│   │                       chat history paths, import/export helpers
+│   │                       per-profile rules, import/export helpers
+│   ├── chat_log.py         ChatLogStore — per-group ring-buffer + persistence,
+│   │                       UNGROUPED_KEY for proximity / RP-mod chat
 │   ├── custom_commands.py  ChatCommandDispatcher engine, AuditRecord,
 │   │                       cooldown tracker, destructive-keyword guard
-│   ├── autorun.py          AutorunScheduler engine, AutorunAudit,
-│   │                       fire_now (Run Now / Run on save), rule
-│   │                       normalization + validation
-│   ├── chat_log.py         ChatLogStore (per-group ring buffer + group
-│   │                       names), parse_chat_with_group
-│   ├── player_timers.py    PlayerTimers (session + lifetime tracking),
-│   │                       fmt_duration
 │   └── utils.py            port check, backup zip + testzip,
 │                           clean_mod_filename, fmt_size, DPI awareness
 ├── ui/
@@ -79,12 +72,12 @@ vssm/
 │   ├── widgets.py          TermButton, TermEntry, Sparkline, ScrollableFrame,
 │   │                       ToastQueue (queued, non-overlapping toasts)
 │   ├── tab_custom_commands.py   CUSTOM CMDS tab — full editor + audit panel
-│   ├── tab_autorun.py      AUTORUN tab — interval-based command scheduler
-│   │                       with Run-on-save + Run-Now
-│   ├── tab_chat_log.py     CHAT LOG tab — per-group subtabs + history
-│   ├── tab_mods.py         Mods tab + ModDB browser (1,500 lines)
+│   ├── tab_chat_log.py     CHAT LOG tab — per-group + Ungrouped / Proximity
+│   │                       (added by apply_chat_log_patches.py)
+│   ├── tab_mods.py         Mods tab + ModDB browser + update picker dialog
 │   ├── tab_commands.py     COMMANDS tab — VS command reference
-│   ├── tab_settings.py     SETTINGS tab — paths, scheduling, theme
+│   ├── tab_settings.py     SETTINGS tab — paths, scheduling, theme,
+│   │                       player-aware restart/shutdown guards
 │   ├── tab_backup.py       BACKUP tab
 │   ├── tab_config.py       CONFIG editor
 │   └── tab_custom_theme.py CUSTOM THEME color picker
@@ -92,31 +85,85 @@ vssm/
 │   └── manager.py          BackupManager — async zip + retention
 ├── mods/
 │   ├── inspector.py        LocalModInspector (modinfo from zip/dir/cs/dll)
-│   └── moddb.py            ModDbClient (ModDB REST API, stdlib only)
-└── tests/                  300+ tests across 7 test modules
+│   └── moddb.py            ModDbClient (ModDB REST API, on-disk TTL cache)
+└── tests/                  182 tests for all pure modules
     ├── conftest.py
-    ├── test_parsers.py     log-line classification, chat formats,
-    │                       multi-line /list clients, got-removed,
-    │                       cron, version compare
+    ├── test_parsers.py     log-line classification, cron, version compare
     ├── test_custom_commands.py   trigger matching, args, cooldowns,
     │                             roles, destructive-guard, audit hooks
-    ├── test_autorun.py     interval scheduling, run-on-start,
-    │                       pause-when-empty, multi-line commands,
-    │                       live rule edits, fire_now (Run Now /
-    │                       Run on save), audit emission
-    ├── test_chat_log.py    parsing with group ID, ring-buffer cap,
-    │                       group naming + persistence round-trip,
-    │                       all-entries chronological merge
-    ├── test_player_timers.py   session/total accumulation,
-    │                           flush-without-double-counting,
-    │                           reset_all, fmt_duration
-    ├── test_settings.py    schema migration v1 → v7, per-profile
-    │                       rules + autorun + player_totals,
+    ├── test_settings.py    schema migration v1→v4, per-profile rules,
     │                       import/export, atomic save
     └── test_utils.py       fmt_size, sanitize, mod-filename cleaning
 ```
 
-## The CUSTOM CMDS tab
+## Improvements vs v2
+
+### Initial pass
+
+| #  | Improvement                                                       | Status |
+|----|-------------------------------------------------------------------|--------|
+| 1  | Modular package split (no backwards compatibility kept)           | ✓ |
+| 4  | Type hints throughout                                             | ✓ |
+| 6  | Date-based backup retention (Keep last N days)                    | ✓ |
+| 7  | Backup ZIP integrity check (`zipfile.testzip()`) after write      | ✓ |
+| 8  | Crash-loop threshold reads from settings                          | ✓ |
+| 10 | Console right-click → copy line / copy all / clear                | ✓ |
+| 12 | Toast queue — toasts no longer overlap                            | ✓ |
+| 13 | Neutral dark mode added alongside amber/green/cyan                | ✓ |
+| 14 | Ban confirmation dialog                                           | ✓ |
+| 15 | Crash-loop threshold UI in Settings tab                           | ✓ |
+| 16 | Cron schedule entry validated live, shows next-fire ETA           | ✓ |
+| 17 | Atomic settings save (tmp → rename)                               | ✓ |
+| 18 | Settings schema versioning                                        | ✓ |
+| 19 | `requirements.txt`                                                | ✓ |
+| 20 | `--log-level` CLI argument                                        | ✓ |
+| 21 | `main()` entry-point function                                     | ✓ |
+| +  | Custom Commands tab + ChatCommandDispatcher                       | ✓ |
+
+### Second pass
+
+| #  | Improvement                                                       | Status |
+|----|-------------------------------------------------------------------|--------|
+| 1  | Unit tests — 155 cases across 4 test modules                      | ✓ |
+| 2  | `backup/` extraction — `BackupManager` class                      | ✓ |
+| 3  | Tab extraction — every `_build_*_tab` lives in `ui/tab_*.py`      | ✓ |
+| 4  | Per-rule cooldowns, tracked per (rule, player)                    | ✓ |
+| 5  | Argument capture — `{1}–{9}`, `{target}`, `{args}`, `{role}`      | ✓ |
+| 6  | Audit log — `AuditRecord` + listener, surfaced in tab + log file  | ✓ |
+| 7  | Destructive-keyword guard for `/stop` `/ban` `/op` …              | ✓ |
+| 8  | Pre-migration settings backup (`.v3.<timestamp>.bak`)             | ✓ |
+| 9  | Type hints on extracted mod block                                 | ✓ |
+| 10 | Print → LOG sweep (already clean from v2)                         | ✓ |
+| 11 | Per-profile custom commands (schema v4 migration)                 | ✓ |
+| 12 | Import / export rules as JSON                                     | ✓ |
+| 13 | Live trigger preview — runs the dispatcher against a sample player| ✓ |
+
+### Third pass (this iteration)
+
+| #   | Improvement                                                       | Status |
+|-----|-------------------------------------------------------------------|--------|
+| 14  | Player-aware restart / shutdown guards                            | ✓ |
+| 15  | Ungrouped / Proximity chat subtab in CHAT LOG                     | ✓ |
+| 16  | "Auto-save" labels renamed to "Periodic auto-backup" for clarity  | ✓ |
+| 17  | Mod-update picker dialog — per-mod selection with smart defaults  | ✓ |
+| 18  | Canonical `version_is_newer` for update check (kills legacy path) | ✓ |
+| 19  | GAME VER filter applied to update check                           | ✓ |
+| 20  | Bulk-update progress bar + working Cancel inside the picker       | ✓ |
+| 21  | Parallel `_update_check_worker` (`ThreadPoolExecutor`)            | ✓ |
+| 22  | On-disk TTL cache for `moddb.get_mod` (`get_mod_cached`)          | ✓ |
+| 23  | Atomic mod download — `.part` + `os.replace()` rename             | ✓ |
+
+### File-size wins from extraction
+
+- `VSSM.py`: 7,491 → 4,121 → 3,997 → 3,732 → 2,479 → **3,595** lines
+  (the third-pass features added the player-check helpers and assorted
+  glue back into the host class — still less than half of v2)
+- `ui/tab_mods.py`: 1,500 → **1,786** lines (picker dialog + bulk-update
+  runner are the bulk of the growth; the parallel/cached worker also
+  added a small amount)
+- Backup logic: 200 lines moved to `backup/manager.py`
+
+## The Custom Commands tab
 
 Reachable from the sidebar as **CUSTOM CMDS**. Each rule has:
 
@@ -177,11 +224,13 @@ with the existing rules or replace them entirely. The import path
 runs every rule through `validate_rule`, so a malformed file is rejected
 with a clear error before anything is written.
 
-### Per-profile rules
+### Per-profile rules (schema v4)
 
 Each profile owns its own rule list. Switching profiles in Settings
 swaps the active rule set instantly — useful for running e.g. a
 `creative` profile with `!gm 1` and a `survival` profile without it.
+Existing v3 settings files are auto-migrated on first launch (with a
+pre-migration `.bak` saved alongside).
 
 ### Rule schema
 
@@ -196,263 +245,150 @@ swaps the active rule set instantly — useful for running e.g. a
 }
 ```
 
-## The AUTORUN tab
+## Player-aware shutdown / restart guards
 
-Reachable from the sidebar as **AUTORUN**. Where Custom Commands react
-to chat input, Autorun rules fire on a fixed interval while the server
-is running. Useful for periodic saves, hourly announcements, automatic
-day-skipping, that sort of thing.
+Three checkboxes in the **Settings** tab gate the shutdown/restart
+paths against the live player list (which VSSM keeps current via
+`/list clients` polling, configurable in Settings):
 
-Each rule has:
+- **Check for players before manual restart** — when you click the
+  Restart button and players are online, a 3-button dialog appears:
+  *Wait until empty* / *Continue anyway* / *Cancel*.
+- **Check for players before manual shutdown** — same dialog wired
+  to the Stop button.
+- **Check for players before scheduled restart** — when a cron-fired
+  restart is due and players are online, the restart **silently
+  defers**: VSSM broadcasts a heads-up via `/announce`, polls every
+  5 seconds, and fires the restart as soon as the server is empty.
+  The pre-existing 5-min / 1-min / 10-sec broadcast warnings still
+  fire at the originally-scheduled time, so players still get advance
+  notice.
 
-- **Name** — label shown in the rule list. Also the dedup key, so two
-  rules can't share a name.
-- **Enabled** — toggle without deleting.
-- **Interval** — value + unit (seconds / minutes / hours).
-- **Commands** — multi-line text, one console command per line. Lines
-  starting with `#` are comments and ignored at dispatch time.
-- **Run once on server start** — fire immediately when the server comes
-  up, then continue on the regular interval.
-- **Run on save** — fire whenever you click 💾 Save, AND reset the
-  next-fire deadline so the periodic cadence re-anchors to save-time.
-  Useful for "I just edited a /broadcast text — run it now to verify,
-  and re-anchor the every-15-min cadence."
-- **Pause when 0 players online** — skip the tick instead of double-
-  firing later. If the server sits empty for an hour, you get **one**
-  fire when a player comes back, not 12 backlogged ones.
+All three default to off — existing settings files load unchanged and
+behaviour is identical to before until you tick a box. The flags are
+persisted per-profile, so each server config can have its own policy.
 
-Rules are per-profile, persisted in the same JSON store as everything
-else. The audit strip across the bottom of the tab shows recent fires
-and the reason for any skipped ones (`disabled`, `paused_empty`,
-`not_running`).
+## CHAT LOG tab — Ungrouped / Proximity subtab
 
-### ▶ Run Now
-
-The editor has a **▶ Run Now** button next to **💾 Save**. It fires
-the *saved* state of the selected rule once, immediately, and resets
-the next scheduled fire to `interval_secs` from now. Useful for testing
-a newly-edited rule without waiting for the next tick.
-
-If you have unsaved edits in the editor when you click Run Now, you
-get a toast warning: "Running the SAVED version (unsaved edits
-ignored)" — that prevents the surprise of clicking Run Now on a rule
-you just edited and getting old behaviour. To run your edits, save
-with the **Run on save** checkbox enabled.
-
-Both Run Now and Run-on-save respect every existing gate (`enabled`,
-`pause_when_empty`). A blocked fire emits the matching audit record
-but **still resets the schedule** — pressing the button is an explicit
-"re-anchor cadence to now" intent, separate from whether this
-particular fire could go through.
-
-### How the scheduler works
-
-A single `AutorunScheduler` lives on `ServerManagerApp`. It's started
-when the server transitions to running and stopped on shutdown, so all
-interval deadlines anchor to a fresh server-start wall clock — they
-don't drift across restarts. A 1Hz tick (`_tick_autorun`) drives the
-scheduler while the server is up; rule deadlines are reread from
-settings every tick, so saving a rule in the editor takes effect on
-the very next tick without any reattach plumbing.
-
-### Rule schema
-
-```json
-{
-  "name":             "Hourly save",
-  "enabled":          true,
-  "interval_secs":    3600,
-  "commands":         "/autosavenow",
-  "run_on_start":     false,
-  "run_on_save":      false,
-  "pause_when_empty": false
-}
-```
-
-## The CHAT LOG tab
-
-Reachable from the sidebar as **CHAT LOG**. Vintage Story 1.20+ tags
-every chat line with a group ID:
-
-    [Server Chat] 0  | DerelictDawn: Oh
-    [Server Chat] 10 | Fighter199: testing chat long
-
-Group `0` is general (everyone). Other IDs are private/named groups
-the server creates when players form a chat circle. The CHAT LOG tab
-captures and persists all of it.
-
-### What's in each subtab
-
-One subtab per chat group seen on the server, plus an **All** subtab
-that merges everything chronologically. Each per-group tab shows lines
-as they arrive; the All tab adds a group label so you can tell where
-each line came from:
+The **CHAT LOG** tab keeps one subtab per chat group ID (`General`,
+named groups, etc.). A separate subtab — **Ungrouped / Proximity** —
+captures roleplay/proximity-mod chat lines that have no numeric group
+ID, e.g. lines emitted by *The Basics — Roleplay (RP) Proximity Chat*:
 
 ```
-[00:34:32] [Builders chat] Fighter199: testing chat long
-[00:35:21] [General] Fighter199: this is general chat
+[Server Chat] Dan mentions "hello there"
+[Server Chat] Dan states "this is proximity yelling"
+[Server Chat] Dan exclaims "this is proximity yelling!"
 ```
 
-### Naming groups
+These lines previously fell through both parsers (no `<digit> | Player:`
+prefix, no `Player: message` colon form) and were silently dropped.
+`core.parsers.parse_ungrouped_chat` now matches the `Player VERB
+"message"` shape, and the verb is preserved in the rendered message
+body so the roleplay flavour stays visible. The default tab name is
+`Ungrouped / Proximity`; you can rename it via the same right-click
+menu used for any other group.
 
-Group `0` shows as "General" by default; everything else shows as
-"Group N" until you give it a name. Two ways to rename: right-click
-any group tab, or click the rule and use the **✎ Rename group**
-button in the toolbar. Names persist across restarts. Setting the
-name to blank resets to the default.
+## Settings tab terminology
 
-### Toolbar
+**"Auto-save enabled"** has been renamed **"Periodic auto-backup"** to
+match what the feature actually does — it's a periodic *backup*
+scheduler that *optionally* sends `/autosavenow` first via a separate
+checkbox. The Python identifiers and settings-file keys are unchanged
+(`autosave_enabled`, `autosave_cmd`, `autosave_interval`), so existing
+settings files load with no migration.
 
-- **✎ Rename group** — rename the currently-selected tab.
-- **🗑 Clear group** — drop history for this group only (name kept).
-- **🗑 Clear all** — drop history for all groups (names kept).
+| Old label                          | New label                            |
+|------------------------------------|--------------------------------------|
+| Auto-save enabled                  | Periodic auto-backup                 |
+| Send /autosavenow with backup      | Save world before each auto-backup   |
+| Auto-save every (min):             | Auto-backup every (min):             |
 
-### Persistence
+## The mod updater
 
-Chat history is stored per profile, in
-`chat_log_<profile>.json` next to your `settings.json`. The store
-caps each group at 500 lines (oldest evicted) so the file stays small
-even on busy servers. Saved on:
+Click **⟳ Check Updates** on the **MODS → INSTALLED** sub-tab to scan
+every local mod against ModDB.
 
-- Rename / clear actions (immediate)
-- VSSM exit (final flush from `on_closing`)
+### What runs under the hood
 
-Profile switches load that profile's chat archive automatically.
+- **Parallel update check.** Each mod is queried via
+  `concurrent.futures.ThreadPoolExecutor` (default 8 workers); the
+  status line shows live progress: `Checking updates — 12/50 (3 cached,
+  9 fetched)…`.
+- **On-disk TTL cache.** `ModDbClient.get_mod_cached` consults a JSON
+  cache file (next to `vserverman_settings.json`) before hitting the
+  network. The cache TTL is 6 hours by default, so re-running the
+  check inside that window costs zero network. Tick *Force refresh*
+  in the MODS tab to bypass the cache for one check.
+- **Canonical version comparator.** Update detection routes through
+  `core.parsers.version_is_newer`, which uses the `packaging` library
+  when available and a tested fallback otherwise. Pre-releases are
+  ranked correctly (`1.0.0` > `1.0.0-rc.2` > `1.0.0-pre.1`).
+- **Game-version compatibility filter.** Set GAME VER on the BROWSE
+  sub-tab to your server's actual VS version, and the update check
+  will only consider releases tagged for that version. Mods with
+  releases for *other* versions only are bucketed as
+  *no compatible release* rather than *outdated*, so you can't
+  accidentally pull a 1.21-only release onto a 1.20 server.
 
-### Read-only
+### The picker dialog
 
-This tab only reads chat. Typing messages into a group from VSSM is
-out of scope; the console-input field at the bottom of the main
-window still works for sending raw console commands.
+Hitting Update opens a modal picker dialog showing every outdated
+mod with a checkbox:
 
-## Player timers
+```
+┌─ Mod Update Report ──────────────────────────────────────────┐
+│  3 outdated · 27 up-to-date · 2 no compatible release · …    │
+├──────────────────────────────────────────────────────────────┤
+│  [✓] [SERVER] CarryOn          1.7.3 → 1.8.0                 │
+│  [✓] [ BOTH ] MedievalExpansion 4.5.1 → 4.6.0                │
+│  [ ] [CLIENT] FancyHUD          1.0.0 → 1.1.0                │
+│                                                              │
+│  [Select all] [None] [Server+Universal only] [Client only]   │
+├──────────────────────────────────────────────────────────────┤
+│  ► Up-to-date (27)        — collapsible                      │
+│  ► No release for selected game version (2)  — collapsible   │
+│  ► Failed to check (1)    — collapsible                      │
+│  ► No modid (0)           — collapsible                      │
+├──────────────────────────────────────────────────────────────┤
+│             [Cancel]            [Update 2 selected mod(s)]   │
+└──────────────────────────────────────────────────────────────┘
+```
 
-The player list (in the right sidebar) now shows two timers next to
-each name:
+Smart defaults: server / universal mods are pre-ticked; client-only
+mods are off by default. The Update button label updates live as you
+toggle, and the button is disabled when zero mods are ticked. Quick-
+select buttons toggle subsets without closing the dialog.
 
-    [AL]  Alice  [admin]                    🕐 0:32:15   Σ 14:22:40
+### In-dialog progress + cancel
 
-- **🕐 H:MM:SS** — current session (resets on leave/rejoin).
-- **Σ H:MM:SS** — total across all sessions; persisted across both
-  VSSM and server restarts.
+Once you click Update, the picker UI is replaced with a progress
+panel in the same dialog:
 
-Totals live in the active profile's settings under `player_totals`
-(plain `{"name": seconds}` dict). A 60-second flush tick accumulates
-in-flight session time into the persisted totals so a hard crash loses
-at most ~60s of playtime. Additional flushes happen on every player
-leave, on `_finalize_stop`, and on `on_closing`.
+- A **per-file progress bar** that fills as each download streams.
+- A status line `[3/14] Updating MyMod…`
+- A live counter `3 / 14`.
+- A scrolling log of completed files (`✓ ModA`, `✗ ModB: 404`).
+- A **Cancel** button that aborts cleanly **between files** AND
+  **mid-stream** — the cancel flag is fed into the existing
+  `download_file(cancel_flag=…)` hook in `mods/moddb.py`.
 
-The 1 Hz UI tick updates the labels in place (no row destroy/recreate)
-so there's no flicker even with many players online.
+On completion, Cancel becomes Close and the dialog stays open so you
+can review the log.
 
-## Settings tab highlights
+### Atomic downloads
 
-- **Collapsible header** — the big top header (full title, version,
-  hotkey cheat sheet) collapses into a compact toolbar strip via the
-  **▾/▸** toggle. State persists between sessions. If a setup warning
-  appears while the header is collapsed, it auto-expands once so the
-  full message is visible.
-- **Paths** — Mods folder, world folder, backup destination. Each row
-  has a Browse button and a 📂 Open button that reveals the folder in
-  the OS file manager (Explorer / Finder / xdg-open).
-- **Recurring restart schedule** — wall-clock cron-style entries. Use
-  24-hour `HH:MM`, optionally prefixed by a weekday (`mon`, `tue`,
-  `wed`, `thu`, `fri`, `sat`, `sun`). Multiple entries separated by
-  commas or semicolons. Validated live; the next-fire ETA is shown
-  next to the entry box. Examples:
-    - `06:00` → every day at 6 AM
-    - `06:00, 18:00` → every day at 6 AM and 6 PM
-    - `mon 04:00; fri 22:30` → Mondays 4 AM, Fridays 10:30 PM
-- **Player count poll interval** — how often VSSM sends `/list clients`
-  to refresh the connected-player list while the server is running.
-  Default 30s; 0 disables. The /list response also acts as a
-  fail-safe for the player tracker (see "Hooking into the server log"
-  below).
-- **Crash-loop threshold** — how many crashes within how many seconds
-  trigger an auto-restart shutoff. Default 3 in 600s.
-- **Auto-save** — interval-based `/autosavenow` plus optional pre-start
-  / pre-stop world backups.
-- **CRT theme** — amber, green, cyan, dark, or fully custom (the
-  CUSTOM THEME tab is a per-color picker that writes to settings).
-
-## Hooking into the server log
-
-`core/parsers.py` handles every shape of line VSSM cares about. The
-parser is pure (no I/O, no Tk), and lines flow through it from the
-output-queue processor on the Tk main thread.
-
-### Chat lines
-
-Two parser functions, run in parallel on every chat line:
-
-- `parse_chat_message(line)` → `(player, message)`. Used by the
-  Custom Commands dispatcher. Handles **both** historical formats:
-  the older Minecraft-style `[Server Chat] <Alice> hi` and the
-  current VS 1.20+ `[Server Chat] 0 | Alice: hi`. The colon form
-  requires a leading `<digits> |` group prefix to guard against
-  false positives on notification lines.
-
-- `parse_chat_with_group(line)` → `(group_id, player, message)`. Used
-  by the Chat Log tab; only matches the colon form (which is the only
-  shape that carries a group ID).
-
-When `_handle_server_line()` classifies a line as `chat`, it dispatches
-through the custom-commands engine **and** appends to the chat-log
-store, in that order. Each path is independent — a chat line that
-fires a custom command also lands in the chat archive.
-
-### Player events
-
-`parse_player_event(line)` recognises:
-
-- **Joins** — `Player 'X' has joined the game`, `[Audit] X joined`,
-  `X [ip]:port joins`, plus a few defensive variants.
-- **Leaves** — `Player X left.`, `Player 'X' has left the game`,
-  `[Audit] Client X disconnected`, `Client X disconnected`,
-  and `Player X got removed.` (a phrasing some VS builds use).
-- **List headers** — `List of online Players` opens a multi-line
-  accumulation block.
-- **List entries** — `Playing [N] Name [ip]:port (...)` rows.
-
-The host code maintains a 1-second buffer for the multi-line list
-block, then flushes through `_sync_players_from_list`, which does
-**bidirectional sync**: any name in the list that isn't tracked is
-added (with role lookup queued); any currently-tracked name not in the
-list is removed (with timer accumulation). This is the fail-safe that
-recovers from missed leave events — even if a leave message slips
-through somehow, the next /list clients sync catches up.
-
-The /list output uses a `[HH:MM:SS]` console-time prefix that the
-existing parser also strips, in addition to the `D.M.YYYY` and ISO-style
-timestamps.
-
-## Windows-specific note: console attachment and stdin
-
-On Windows, `VintagestoryServer.exe` reads commands from the parent's
-console by default. If we just redirect stdin via a pipe and let the
-child inherit our console, VS reads from the real console and ignores
-our piped bytes — so `/stop`, `/list clients`, `/announce`, every
-custom command we send, all silently disappear.
-
-The fix in `start_server` is to launch the server with two Win32
-creation flags:
-
-- `CREATE_NEW_PROCESS_GROUP` (`0x00000200`) — detaches from our
-  console group so a Ctrl-C in our window can't propagate to the
-  server.
-- `CREATE_NO_WINDOW` (`0x08000000`) — suppresses the child's own
-  console window.
-
-With no console attached, VS falls back to reading stdin, which is the
-pipe we own. On non-Windows platforms these flags are not used.
+`ModDbClient.download_file` writes the response to `<dest>.part` and
+then performs an `os.replace()` to swap it into place. A failed or
+cancelled download leaves no half-written file at the destination
+path; `.part` files are cleaned up on error.
 
 ## Tests
 
 The test suite covers the pure logic modules (parsers, custom-commands
-engine, autorun scheduler, chat-log store, player-timer engine,
-settings layer, utility helpers). UI code is intentionally not
-exercised — Tk testing is fragile and slow, and the value-per-line is
-much higher in the engine.
+engine, settings layer, utility helpers, chat-log store). UI code is
+intentionally not exercised — Tk testing is fragile and slow, and the
+value-per-line is much higher in the engine.
 
 ```bash
 # Without pytest (pure stdlib)
@@ -466,25 +402,54 @@ The tests are written in pytest style (classes + `test_*` methods,
 fixture for tmp settings dir, `pytest.raises`) and the in-tree runner
 provides just enough of the pytest surface to execute them.
 
-## Settings schema versions
+## Hooking into the server log
 
-Schema migrations run automatically on first launch after an upgrade.
-A timestamped `.bak` is written next to `vserverman_settings.json`
-before any migration mutates the file.
+`core/parsers.py::parse_chat_message` parses Vintage Story chat lines
+(`[Server Chat] <Alice> !warp spawn`). When `_handle_server_line()`
+classifies a line as `chat`, the parsed `(player, message)` is dispatched
+through `ChatCommandDispatcher`, which checks the speaker's role
+(populated from `/player NAME role` responses) against each enabled rule
+and emits the resulting console commands via the existing
+`_send_internal_command()` path.
 
-| Version | Change |
-|---------|--------|
-| v1 | Initial flat key/value layout |
-| v2 | Multi-profile support (`active_profile`, `profiles{}`) |
-| v3 | Top-level `custom_commands` list |
-| v4 | `custom_commands` promoted to per-profile |
-| v5 | Added `player_count_poll_secs` (default 30) |
-| v6 | Added per-profile `autorun_rules` list |
-| v7 | Added per-profile `player_totals` dict (lifetime playtime) |
+Audit records are routed through `app.after_idle` so the UI updates
+always happen on the Tk main thread, regardless of which thread the
+dispatch was originally invoked from.
 
-The current schema constant is `SETTINGS_SCHEMA_VERSION` in
-`core/constants.py`.
+For the CHAT LOG tab, the same `_handle_server_line` first tries
+`parse_chat_with_group` (matches `<group_id> | Player: message`), then
+falls through to `parse_ungrouped_chat` for `Player VERB "message"`
+shapes from proximity / RP mods. Both feed the `ChatLogStore` ring
+buffer (default 500 lines per group) which persists across launches.
 
-Chat history lives **outside** settings.json, in
-`chat_log_<profile>.json` next to it — separate file per profile so
-the main settings blob doesn't bloat as messages accumulate.
+## Patcher scripts
+
+A handful of `apply_*_patch.py` scripts are shipped alongside the
+codebase to apply incremental changes to an existing install. Each
+follows the same conventions:
+
+- **Idempotent** — re-running detects a marker string and exits clean.
+- **Pre-flight verification** — every search snippet must match
+  exactly once before any file is touched. Mismatch → exit code 2,
+  no changes written.
+- **Timestamped backups** — every modified file gets a `.<stamp>.bak`
+  next to it.
+- **Post-patch syntax check** — modified files are byte-compiled with
+  `py_compile`. Syntax error → automatic rollback from backup.
+- **CRLF-aware** — Windows line endings are detected on read and
+  preserved on write.
+- **`--dry-run`** — verify everything would patch without writing.
+
+Exit codes: `0` (applied or already applied), `1` (bad path / files
+missing / prerequisite missing), `2` (snippet mismatch), `3`
+(post-patch syntax error → rolled back).
+
+The patchers in this iteration:
+
+| Patcher                                       | Adds                                       |
+|-----------------------------------------------|--------------------------------------------|
+| `apply_player_check_patch.py`                 | Player-aware restart/shutdown guards       |
+| `apply_ungrouped_chat_patch.py`               | Ungrouped / Proximity subtab in CHAT LOG   |
+| `apply_autosave_relabel_patch.py`             | Renames "Auto-save" → "Periodic auto-backup" |
+| `apply_mod_update_picker_patch.py`            | Per-mod selection picker dialog            |
+| `apply_mod_updater_polish_v2_patch.py`        | Canonical comparator + GAME VER filter + cancel/progress (run AFTER picker) |
