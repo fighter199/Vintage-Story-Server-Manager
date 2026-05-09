@@ -54,6 +54,61 @@ class _PytestShim:
 
 
 # ----------------------------------------------------------------------
+# Optional lint pass (review §3.8)
+# ----------------------------------------------------------------------
+def _run_lint(strict: bool = False) -> bool:
+    """Try ruff, then pyflakes, then give up silently. Returns True on
+    pass / no linter installed; False only when a linter ran AND
+    reported issues AND strict=True."""
+    import shutil as _sh
+    import subprocess as _sp
+    here = os.path.dirname(os.path.abspath(__file__))
+
+    if _sh.which("ruff"):
+        print("=" * 60)
+        print("Lint: ruff check .")
+        print("=" * 60)
+        r = _sp.run(["ruff", "check", "."], cwd=here)
+        if r.returncode != 0:
+            if strict:
+                print("Lint failed (--strict-lint).")
+                return False
+            print("Lint reported issues (non-fatal; pass --strict-lint "
+                  "to make these block the run).")
+        return True
+
+    try:
+        import pyflakes  # noqa: F401
+    except ImportError:
+        # No linter installed at all. Silent skip — keeping VSSM's
+        # zero-required-dependency promise.
+        return True
+
+    print("=" * 60)
+    print("Lint: python -m pyflakes  (ruff not found)")
+    print("=" * 60)
+    targets = [
+        os.path.join(here, name)
+        for name in os.listdir(here)
+        if name.endswith(".py") and not name.startswith("apply_")
+        and name not in ("run_tests.py",)
+    ]
+    # Add package dirs.
+    for sub in ("core", "ui", "mods", "backup", "tests"):
+        full = os.path.join(here, sub)
+        if os.path.isdir(full):
+            targets.append(full)
+    r = _sp.run([sys.executable, "-m", "pyflakes", *targets], cwd=here)
+    if r.returncode != 0:
+        if strict:
+            print("Lint failed (--strict-lint).")
+            return False
+        print("Lint reported issues (non-fatal; pass --strict-lint "
+              "to make these block the run).")
+    return True
+
+
+# ----------------------------------------------------------------------
 # Manual fixtures
 # ----------------------------------------------------------------------
 def _make_tmp_script_dir():
@@ -74,16 +129,42 @@ def _restore_script_dir():
         del cst._orig_script_dir
 
 
+def _make_tmp_path():
+    """Replicate pytest's built-in `tmp_path` fixture.
+
+    pytest yields a pathlib.Path to a fresh per-test temp directory.
+    Returns (path_obj, cleanup_dir_str) where cleanup_dir_str is what
+    the run loop should rmtree after the test finishes.
+    """
+    import pathlib
+    tmp = tempfile.mkdtemp()
+    return pathlib.Path(tmp), tmp
+
+
 # ----------------------------------------------------------------------
 # Test discovery + run loop
 # ----------------------------------------------------------------------
 def main():
+    # Lint flags (review §3.8). Strict mode makes a lint finding fatal;
+    # default mode prints findings but exits with the test result.
+    import argparse as _ap
+    _argparser = _ap.ArgumentParser(add_help=False)
+    _argparser.add_argument("--strict-lint", action="store_true",
+                             help="Treat lint warnings as failures.")
+    _argparser.add_argument("--no-lint", action="store_true",
+                             help="Skip the optional lint pass entirely.")
+    _args, _ = _argparser.parse_known_args()
+
     here = os.path.dirname(os.path.abspath(__file__))
     if here not in sys.path:
         sys.path.insert(0, here)
     tests_dir = os.path.join(here, "tests")
     if tests_dir not in sys.path:
         sys.path.insert(0, tests_dir)
+
+    if not _args.no_lint:
+        if not _run_lint(strict=_args.strict_lint):
+            return 2
 
     sys.modules["pytest"] = _PytestShim()
 
@@ -110,10 +191,19 @@ def main():
                     continue
                 sig = inspect.signature(method)
                 kwargs = {}
-                cleanup = None
+                # Each cleanup is a (callable, *args) tuple so we can
+                # handle multiple fixtures composing in one test.
+                cleanups: list = []
                 if "tmp_script_dir" in sig.parameters:
                     kwargs["tmp_script_dir"] = _make_tmp_script_dir()
-                    cleanup = kwargs["tmp_script_dir"][0]
+                    cleanups.append(("tmp_script_dir",
+                                       kwargs["tmp_script_dir"][0]))
+                if "tmp_path" in sig.parameters:
+                    # pytest's built-in tmp_path fixture — yields a
+                    # pathlib.Path to a fresh per-test temp dir.
+                    path_obj, cleanup_str = _make_tmp_path()
+                    kwargs["tmp_path"] = path_obj
+                    cleanups.append(("tmp_path", cleanup_str))
                 full = f"{mod_name}::{name}::{mname}"
                 try:
                     method(inst, **kwargs)
@@ -124,12 +214,13 @@ def main():
                     failures.append((full, traceback.format_exc()))
                     print(f"  FAIL  {full}")
                 finally:
-                    if cleanup:
+                    for kind, target in cleanups:
                         try:
-                            shutil.rmtree(cleanup)
+                            shutil.rmtree(target)
                         except OSError:
                             pass
-                        _restore_script_dir()
+                        if kind == "tmp_script_dir":
+                            _restore_script_dir()
 
     print()
     print("=" * 60)

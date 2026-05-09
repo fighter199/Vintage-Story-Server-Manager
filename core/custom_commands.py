@@ -391,9 +391,12 @@ def import_rules_from_json(payload: str) -> list[dict]:
     if isinstance(data, list):
         raw_rules = data
     elif isinstance(data, dict) and isinstance(data.get("rules"), list):
-        # Reject obvious mis-imports: if the file looks like a settings
-        # dump (has any of these keys), bail early with a clear error
-        # instead of silently picking out the rules.
+        # Settings-dump check FIRST: if the payload has any settings-only
+        # keys, surface the specific "looks like a settings export" error
+        # — that's a more actionable message than the generic
+        # "missing wrapper key" branch below would give. A settings
+        # dump never has a wrapper key, so without this ordering the
+        # wrapper-key branch would always shadow this one.
         settings_only_keys = {
             "active_profile", "profiles", "ui_scale_override",
             "theme_preset", "crash_limit", "crash_window_secs",
@@ -405,6 +408,15 @@ def import_rules_from_json(payload: str) -> list[dict]:
                 "This file looks like a full settings export, not a "
                 "custom-commands export — refusing to import. "
                 f"Unexpected keys: {', '.join(leaked)}.")
+        # Tighter shape check (review §1.5): the dict-form payload must
+        # carry either the current or the legacy wrapper key. Without
+        # this guard, _LEGACY_WRAPPER_KEY is dead code and ANY dict
+        # with a "rules" list would import — defensible but loose.
+        recognised_keys = (EXPORT_WRAPPER_KEY, _LEGACY_WRAPPER_KEY)
+        if not any(k in data for k in recognised_keys):
+            raise ValueError(
+                "Not a recognised custom-commands export — missing "
+                f"wrapper key. Expected one of: {', '.join(recognised_keys)}.")
         raw_rules = data["rules"]
     else:
         raise ValueError(

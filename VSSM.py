@@ -67,7 +67,8 @@ from core.parsers import (classify_line, parse_player_event, split_client_list,
                            parse_cron_expr, seconds_until_next,
                            parse_chat_message)
 from core.settings import (load_settings, save_settings, get_active_profile,
-                            load_custom_commands, save_custom_commands)
+                            load_custom_commands, save_custom_commands,
+                            chat_log_path, load_player_totals)
 from core.custom_commands import ChatCommandDispatcher
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
                          clean_mod_filename, fmt_size, backup_world_to_zip,
@@ -80,9 +81,7 @@ from ui.tab_custom_commands import CustomCommandsTab
 from ui.tab_chat_log import ChatLogTab
 from core.chat_log import (ChatLogStore, parse_chat_with_group,
                             parse_ungrouped_chat, UNGROUPED_KEY)
-from core.settings import chat_log_path
 from core.player_timers import PlayerTimers, fmt_duration
-from core.settings import load_player_totals
 from ui.tab_autorun import AutorunTab
 from core.autorun import AutorunScheduler
 from mods.inspector import LocalModInspector
@@ -288,6 +287,11 @@ class ServerManagerApp(tk.Tk):
         self._cron_entries         = []
         self._cron_job_id          = None
         self._cron_warning_jobs    = []
+        # Serialises concurrent writes to server_process.stdin from
+        # different threads / timer paths (review §3.2). Cheap insurance
+        # against interleaved bytes when e.g. an autorun tick collides
+        # with a manual button click.
+        self._stdin_lock           = __import__("threading").Lock()
         self._restart_warning_jobs = []
         self._cpu_history: deque   = deque(maxlen=120)
         self._mem_history: deque   = deque(maxlen=120)
@@ -2175,18 +2179,23 @@ class ServerManagerApp(tk.Tk):
 
     def _handle_server_line(self, raw: str):
         stripped = raw.rstrip('\n').rstrip('\r')
+        # Each try-block guards against a single broken line crashing the
+        # reader thread. They USED to be silent (except Exception: pass);
+        # now they LOG.exception so a real bug surfaces in vserverman.log
+        # instead of disappearing (review §2.4).
         try:
             tag = classify_line(stripped)
         except Exception:
+            LOG.exception("classify_line failed on: %r", stripped)
             tag = "info"
         try:
             self.append_console(stripped, tag)
         except Exception:
-            pass
+            LOG.exception("append_console failed on: %r", stripped)
         try:
             self._parse_player_event(stripped)
         except Exception:
-            pass
+            LOG.exception("_parse_player_event failed on: %r", stripped)
         try:
             role = parse_role_response(stripped)
             if role and self._pending_role_query:
@@ -2197,7 +2206,7 @@ class ServerManagerApp(tk.Tk):
                 else:
                     self._operators.discard(who)
         except Exception:
-            pass
+            LOG.exception("parse_role_response failed on: %r", stripped)
         # NEW: custom chat command dispatch
         try:
             if tag == "chat":
@@ -2321,8 +2330,13 @@ class ServerManagerApp(tk.Tk):
         line_ending = b"\r\n" if sys.platform.startswith("win") else b"\n"
         payload = cmd.encode("utf-8", errors="replace") + line_ending
         try:
-            proc.stdin.write(payload)
-            proc.stdin.flush()
+            # Serialise writes — multiple threads can land here
+            # (autorun, cron, manual, chat dispatcher). Without the
+            # lock, two interleaved writes would corrupt the byte
+            # stream the server reads (review §3.2).
+            with self._stdin_lock:
+                proc.stdin.write(payload)
+                proc.stdin.flush()
         except (BrokenPipeError, OSError) as e:
             LOG.error("_send_internal_command pipe error: %s (cmd=%r)", e, cmd)
             return False
@@ -3494,21 +3508,11 @@ class ServerManagerApp(tk.Tk):
         return ("side_unk", "  ?   ")
 
     def _fmt_size(self, n):
-        try:
-            n = int(n)
-        except (TypeError, ValueError):
-            return "?"
-        if n <= 0:
-            return "0 B"
-        units = ["B", "KB", "MB", "GB"]
-        i = 0
-        v = float(n)
-        while v >= 1024 and i < len(units) - 1:
-            v /= 1024.0
-            i += 1
-        if i == 0:
-            return f"{int(v)} {units[i]}"
-        return f"{v:.1f} {units[i]}"
+        # fmt_size delegated to core.utils.fmt_size for a single source of truth
+        # (review §2.1). This shim is kept because many call sites use
+        # app._fmt_size(...); a follow-up patch can switch them to direct
+        # imports and drop the method entirely.
+        return fmt_size(n)
 
     def _open_current_mod_in_browser(self):
         from ui.tab_mods import _open_current_mod_in_browser as _impl
