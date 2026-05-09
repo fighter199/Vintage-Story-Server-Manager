@@ -3510,31 +3510,6 @@ class ServerManagerApp(tk.Tk):
             return f"{int(v)} {units[i]}"
         return f"{v:.1f} {units[i]}"
 
-    def _version_is_newer(self, remote, local):
-        """Compare two version strings component-wise. Unknown formats
-        fall back to string inequality so we err on the side of flagging
-        an update rather than missing one."""
-        if not remote:
-            return False
-        if not local:
-            return True
-        def parts(s):
-            out = []
-            for seg in re.split(r"[.\-+]", s):
-                m = re.match(r"(\d+)", seg)
-                out.append(int(m.group(1)) if m else 0)
-            return out
-        try:
-            rp = parts(remote)
-            lp = parts(local)
-        except Exception:
-            return remote != local
-        # Pad to equal length
-        n = max(len(rp), len(lp))
-        rp += [0] * (n - len(rp))
-        lp += [0] * (n - len(lp))
-        return rp > lp
-
     def _open_current_mod_in_browser(self):
         from ui.tab_mods import _open_current_mod_in_browser as _impl
         return _impl(self)
