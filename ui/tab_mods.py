@@ -2039,18 +2039,21 @@ class _ModUpdatePickerDialog(tk.Toplevel):
 
         cb = tk.Checkbutton(
             row, variable=var,
+            fg=Theme.AMBER, activeforeground=Theme.AMBER_GLOW,
             bg=Theme.BG_INPUT, activebackground=Theme.BG_INPUT,
-            selectcolor=Theme.BG_PANEL,
+            selectcolor=Theme.BG_INPUT,
             highlightthickness=0, bd=0,
         )
         cb.pack(side=tk.LEFT)
 
         # Side badge — colour-coded.
         badge_tag, badge_text = self._app._side_badge(side)
+        # # [picker-dialog-fixes-v1] Theme.OK / Theme.ERR don't exist; use
+        # the canonical GREEN/RED constants used everywhere else.
         badge_fg = {
-            "side_srv":  Theme.OK,
+            "side_srv":  Theme.GREEN,
             "side_both": Theme.AMBER,
-            "side_cli":  Theme.ERR,
+            "side_cli":  Theme.RED,
         }.get(badge_tag, Theme.AMBER_DIM)
         tk.Label(row, text=f"[{badge_text}]",
                  fg=badge_fg, bg=Theme.BG_INPUT,
@@ -2069,10 +2072,14 @@ class _ModUpdatePickerDialog(tk.Toplevel):
 
     def _add_collapsible(self, parent, title, items):
         """Render a list of strings inside a collapsible block."""
-        section = collapsible_section(
-            parent, title, font_spec=self._app.F_SMALL, expanded=False)
+        # # [picker-dialog-fixes-v1] collapsible_section returns (header, body)
+        # and uses `start_collapsed=`, not `expanded=`. The buckets in
+        # this dialog are read-only summaries, so collapse by default.
+        _hdr, body = collapsible_section(
+            parent, title, font_spec=self._app.F_SMALL,
+            start_collapsed=True)
         for line in items:
-            tk.Label(section.body, text=f"  • {line}",
+            tk.Label(body, text=f"  • {line}",
                      fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
                      font=self._app.F_SMALL,
                      anchor=tk.W, justify=tk.LEFT).pack(
