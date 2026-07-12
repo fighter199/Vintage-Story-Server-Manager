@@ -56,6 +56,26 @@ def build_backup_tab(parent, app):
                        selectcolor=Theme.BG_INPUT,
                        font=app.F_SMALL).pack(side=tk.LEFT, padx=6)
 
+    # Independent keep-last-N caps for the start/stop backup families.
+    # (startbackup-*.zip / stopbackup-*.zip — the mode above only
+    # applies to regular backup-*.zip files.)
+    fam_row = tk.Frame(pad, bg=Theme.BG_PANEL)
+    fam_row.pack(fill=tk.X, pady=(4, 0))
+    tk.Label(fam_row, text="Keep start backups:", fg=Theme.AMBER_DIM,
+             bg=Theme.BG_PANEL, font=app.F_SMALL).pack(side=tk.LEFT)
+    TermEntry(fam_row, textvariable=app.max_start_backups_var,
+              font_spec=app.F_SMALL, width=4
+              ).pack(side=tk.LEFT, padx=(4, 14), ipady=1)
+    tk.Label(fam_row, text="Keep stop backups:", fg=Theme.AMBER_DIM,
+             bg=Theme.BG_PANEL, font=app.F_SMALL).pack(side=tk.LEFT)
+    TermEntry(fam_row, textvariable=app.max_stop_backups_var,
+              font_spec=app.F_SMALL, width=4
+              ).pack(side=tk.LEFT, padx=(4, 10), ipady=1)
+    tk.Label(fam_row, text="(newest N kept · 0 = keep all · "
+                           "saved with Settings)",
+             fg=Theme.MUTED, bg=Theme.BG_PANEL,
+             font=app.F_SMALL).pack(side=tk.LEFT)
+
     status = tk.Label(pad, text="No backup in progress.",
                       fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
                       font=app.F_SMALL, anchor=tk.W)

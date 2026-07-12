@@ -65,7 +65,7 @@ from core.constants import (APP_NAME, APP_VERSION, LOG, SERVER_LOG,
 from core.parsers import (classify_line, parse_player_event, split_client_list,
                            parse_role_response, parse_json5_ish,
                            parse_cron_expr, seconds_until_next,
-                           parse_chat_message)
+                           parse_chat_message, strip_log_prefix)
 from core.settings import (load_settings, save_settings, get_active_profile,
                             load_custom_commands, save_custom_commands,
                             chat_log_path, load_player_totals)
@@ -94,6 +94,11 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
+
+
+# Set by main() when the user passes --log-level; when present it wins
+# over the persisted "log_level" settings key.
+_CLI_LOG_LEVEL: Optional[str] = None
 
 
 # ======================================================================
@@ -129,7 +134,7 @@ def load_commands_data() -> dict:
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = parse_json5_ish(f.read())
-    except (FileNotFoundError, Exception):
+    except Exception:
         return FALLBACK_COMMANDS
     if not isinstance(data, dict) or not data:
         return FALLBACK_COMMANDS
@@ -151,26 +156,33 @@ def load_commands_data() -> dict:
 # Boot splash
 # ======================================================================
 class BootSplash(tk.Toplevel):
-    BOOT_LINES = [
-        ("╔══════════════════════════════════════╗", Theme.AMBER_GLOW),
-        ("║  VSERVERMAN v3 — INITIALIZING        ║", Theme.AMBER),
-        ("║  Vintage Story Server Manager        ║", Theme.MUTED),
-        ("╚══════════════════════════════════════╝", Theme.AMBER_GLOW),
-        ("", None),
-        ("Loading modules...", Theme.AMBER_DIM),
-        ("  ✓ Core parsers",       Theme.GREEN),
-        ("  ✓ Settings engine",    Theme.GREEN),
-        ("  ✓ Custom commands",    Theme.GREEN),
-        ("  ✓ Backup scheduler",   Theme.GREEN),
-        ("  ✓ Mod manager",        Theme.GREEN),
-        ("  ✓ Console subsystem",  Theme.GREEN),
-        ("  ✓ Chat dispatcher",    Theme.GREEN),
-        ("", None),
-        ("  System ready. Launching UI...", Theme.AMBER_GLOW),
-    ]
+
+    @staticmethod
+    def _boot_lines():
+        """Built at construction time (not import time) so the splash
+        picks up the user's theme preset — apply_preset() mutates the
+        Theme class attributes after this module has been imported."""
+        return [
+            ("╔══════════════════════════════════════╗", Theme.AMBER_GLOW),
+            ("║  VSERVERMAN v3 — INITIALIZING        ║", Theme.AMBER),
+            ("║  Vintage Story Server Manager        ║", Theme.MUTED),
+            ("╚══════════════════════════════════════╝", Theme.AMBER_GLOW),
+            ("", None),
+            ("Loading modules...", Theme.AMBER_DIM),
+            ("  ✓ Core parsers",       Theme.GREEN),
+            ("  ✓ Settings engine",    Theme.GREEN),
+            ("  ✓ Custom commands",    Theme.GREEN),
+            ("  ✓ Backup scheduler",   Theme.GREEN),
+            ("  ✓ Mod manager",        Theme.GREEN),
+            ("  ✓ Console subsystem",  Theme.GREEN),
+            ("  ✓ Chat dispatcher",    Theme.GREEN),
+            ("", None),
+            ("  System ready. Launching UI...", Theme.AMBER_GLOW),
+        ]
 
     def __init__(self, master, font_spec, on_done, scale=1.0):
         super().__init__(master)
+        self.BOOT_LINES = self._boot_lines()
         self.overrideredirect(True)
         self.configure(bg=Theme.BG_DARK)
         self._on_done = on_done
@@ -223,6 +235,11 @@ class ServerManagerApp(tk.Tk):
     CRASH_WINDOW_SECS = 600
     CRASH_LIMIT       = 3
 
+    # Cap on console scrollback (lines). Both the in-memory line list and
+    # the Text widget are trimmed to this, so a server left running for
+    # days can't grow VSSM's memory without bound.
+    MAX_CONSOLE_LINES = 5000
+
     def __init__(self):
         super().__init__()
         self.withdraw()
@@ -232,6 +249,12 @@ class ServerManagerApp(tk.Tk):
         # ---- Load settings early (needed for theme + scale) ----------
         self._settings = load_settings()
         profile = get_active_profile(self._settings)
+
+        # Apply the persisted log level (--log-level CLI flag wins).
+        if not _CLI_LOG_LEVEL:
+            lvl = str(self._settings.get("log_level") or "").upper()
+            if lvl in ("DEBUG", "INFO", "WARNING", "ERROR"):
+                LOG.setLevel(getattr(logging, lvl))
 
         # ---- Display scaling -----------------------------------------
         self._auto_scale = self._detect_scale()
@@ -281,6 +304,10 @@ class ServerManagerApp(tk.Tk):
 
         self._shutdown_in_progress = False
         self._shutdown_callbacks   = []
+        # Set when the user stops with "backup before stop" enabled;
+        # consumed by _finalize_stop, which takes the snapshot after
+        # the process has exited (world files quiescent).
+        self._pending_stop_backup  = False
         self._crash_times: deque   = deque(maxlen=20)
         self._cmd_history: list    = []
         self._cmd_history_pos      = 0
@@ -291,10 +318,14 @@ class ServerManagerApp(tk.Tk):
         # different threads / timer paths (review §3.2). Cheap insurance
         # against interleaved bytes when e.g. an autorun tick collides
         # with a manual button click.
-        self._stdin_lock           = __import__("threading").Lock()
+        self._stdin_lock           = threading.Lock()
         self._restart_warning_jobs = []
         self._cpu_history: deque   = deque(maxlen=120)
         self._mem_history: deque   = deque(maxlen=120)
+        # Re-used psutil.Process for the resource panel — cpu_percent()
+        # measures against the previous call on the SAME instance, so a
+        # fresh instance every tick would report 0.0 forever.
+        self._psutil_proc          = None
 
         # Players
         self._players: list        = []
@@ -380,6 +411,10 @@ class ServerManagerApp(tk.Tk):
         self.world_folder_var         = tk.StringVar()
         self.backup_dir_var           = tk.StringVar()
         self.max_backups_var          = tk.StringVar(value="10")
+        # Independent keep-last-N caps for the start/stop backup
+        # families (startbackup-*.zip / stopbackup-*.zip). 0 = keep all.
+        self.max_start_backups_var    = tk.StringVar(value="5")
+        self.max_stop_backups_var     = tk.StringVar(value="5")
         self.backup_before_start_var  = tk.BooleanVar()
         self.backup_before_stop_var   = tk.BooleanVar()
         self.autosave_enabled_var     = tk.BooleanVar(value=False)
@@ -821,7 +856,6 @@ class ServerManagerApp(tk.Tk):
         # Persist
         try:
             self._settings["header_collapsed"] = collapsed
-            from core.settings import save_settings
             save_settings(self._settings)
         except Exception:
             LOG.exception("save header_collapsed failed")
@@ -1259,7 +1293,6 @@ class ServerManagerApp(tk.Tk):
         The dict itself is owned by settings (mutated in place by the
         timer engine), so all we need to do is save_settings."""
         try:
-            from core.settings import save_settings
             save_settings(self._settings)
         except Exception:
             LOG.exception("save player totals failed")
@@ -1669,6 +1702,8 @@ class ServerManagerApp(tk.Tk):
         profile["world_folder"]      = self.world_folder_var.get()
         profile["backup_dir"]        = self.backup_dir_var.get()
         profile["max_backups"]       = self.max_backups_var.get()
+        profile["max_start_backups"] = self.max_start_backups_var.get()
+        profile["max_stop_backups"]  = self.max_stop_backups_var.get()
         profile["autorestart"]       = self.autorestart_var.get()
         profile["autosave_enabled"]  = self.autosave_enabled_var.get()
         profile["autosave_interval"] = self.autosave_interval_var.get()
@@ -1711,6 +1746,8 @@ class ServerManagerApp(tk.Tk):
         self.world_folder_var.set(profile.get("world_folder", ""))
         self.backup_dir_var.set(profile.get("backup_dir", ""))
         self.max_backups_var.set(profile.get("max_backups", "10"))
+        self.max_start_backups_var.set(profile.get("max_start_backups", "5"))
+        self.max_stop_backups_var.set(profile.get("max_stop_backups", "5"))
         self.autorestart_var.set(profile.get("autorestart", False))
         self.autosave_enabled_var.set(profile.get("autosave_enabled", False))
         self.autosave_interval_var.set(profile.get("autosave_interval", "30"))
@@ -1827,7 +1864,6 @@ class ServerManagerApp(tk.Tk):
         if not candidates:
             self._notify("No old log files to clear.", level="info")
             return
-        from core.utils import fmt_size
         total = sum(s for _, s in candidates)
         if not messagebox.askyesno(
                 "Clear old logs",
@@ -1893,8 +1929,35 @@ class ServerManagerApp(tk.Tk):
         if not exe or not os.path.isfile(exe):
             self._notify("Server executable not set or invalid.", level="error")
             return
+        if self._backup_manager.in_progress:
+            # Never launch while a zip of the world is being written —
+            # the server's first writes would race the backup.
+            self._notify("Backup in progress — start once it finishes.",
+                         level="warn")
+            return
         if self.backup_before_start_var.get():
-            self._start_async_backup(silent=True, reason="pre-start")
+            # Snapshot while the world is quiescent and only launch once
+            # the zip is complete. (Previously the backup and the server
+            # launch ran concurrently, so the server's first writes
+            # could land mid-backup.)
+            self.append_console(
+                "Pre-start backup — server will launch when it "
+                "completes…", "system")
+            self._start_async_backup(
+                silent=True, reason="pre-start",
+                on_done=lambda _ok: self._launch_server_process())
+            return
+        self._launch_server_process()
+
+    def _launch_server_process(self):
+        """Spawn the server process. Split out of start_server so the
+        pre-start backup can defer the launch until the zip is done."""
+        if self.is_running or self._shutdown_in_progress:
+            return
+        exe = self.server_path_var.get().strip()
+        if not exe or not os.path.isfile(exe):
+            self._notify("Server executable not set or invalid.", level="error")
+            return
         server_dir = os.path.dirname(exe)
         port = find_vs_port(server_dir)
         if not is_port_free(port):
@@ -1942,6 +2005,10 @@ class ServerManagerApp(tk.Tk):
             self._autorun_scheduler.start()
         except Exception:
             LOG.exception("autorun scheduler start failed")
+        # Fresh queue per run — a stale end-of-stream marker left over
+        # from the previous run's reader thread must never be misread
+        # as THIS process exiting (see _read_output).
+        self.output_queue = queue.Queue()
         reader = threading.Thread(target=self._read_output, daemon=True)
         reader.start()
         self.after(100, self._process_queue)
@@ -1982,8 +2049,12 @@ class ServerManagerApp(tk.Tk):
             return
         if on_done:
             self._shutdown_callbacks.append(on_done)
+        # Stop backup: remember the request and take the snapshot in
+        # _finalize_stop, AFTER the process has exited. Zipping while
+        # the server flushed its final world save risked catching the
+        # savegame DB mid-write; post-exit the files are quiescent.
         if self.backup_before_stop_var.get():
-            self._start_async_backup(silent=True, reason="pre-stop")
+            self._pending_stop_backup = True
         self._shutdown_in_progress = True
         self._update_buttons_running(False, shutting_down=True)
         self._set_status("STOPPING", dot="stopping")
@@ -2016,6 +2087,153 @@ class ServerManagerApp(tk.Tk):
 
         _poll_exit(time.time() + timeout)
 
+    # ------------------------------------------------------------------
+    # Savegame DB lock probe (VSSM_DB_LOCK_RESTART_FIX_V1)
+    # ------------------------------------------------------------------
+    # On Windows, the SQLite handles backing VintagestoryServer's
+    # *.vcdbs world database can stay locked for hundreds of ms to a
+    # few seconds after the server process exits — especially when
+    # the exit was via terminate()/kill() rather than a graceful
+    # /stop. Launching a fresh VS process during that window crashes
+    # it at "Loading configuration → opening savegame".
+    #
+    # We can detect the lock cheaply: try to open the file in r+b mode
+    # (read+write, no truncation, no append). Windows refuses with
+    # PermissionError if any other process holds an exclusive handle,
+    # which is exactly the failure mode we want to wait out. Stray
+    # -journal / -wal sidecar files also indicate SQLite recovery
+    # may be needed and are treated as "not ready yet".
+    #
+    # The wait is bounded: after WAIT_CAP_SECS we surface a clear
+    # error and DO NOT launch the server, instead of blindly retrying
+    # into an inevitable crash. This is what makes the difference
+    # between "VSSM recovered on its own" and "user had to restart
+    # the manager to break the loop."
+
+    def _savegame_db_files(self) -> list:
+        """Return absolute paths of all .vcdbs files in the world
+        folder. Empty list if the folder is unconfigured / unreadable
+        — callers treat empty as "nothing to wait on" and proceed."""
+        try:
+            world = self.world_folder_var.get().strip()
+        except Exception:
+            world = ""
+        if not world or not os.path.isdir(world):
+            return []
+        try:
+            return [os.path.join(world, n) for n in os.listdir(world)
+                    if n.lower().endswith(".vcdbs")]
+        except OSError:
+            return []
+
+    def _savegame_lock_status(self) -> tuple:
+        """Probe every .vcdbs in the world folder and report which
+        files (if any) are still locked or have stray sidecar files.
+
+        Returns (locked_paths, sidecar_paths). When both are empty,
+        the DB is safe to open.
+        """
+        locked = []
+        sidecars = []
+        for db in self._savegame_db_files():
+            # An exclusive r+b open is the canonical "is anything else
+            # holding this file?" check on Windows. The file MUST exist
+            # — a missing file means there's no lock to wait on.
+            try:
+                with open(db, "r+b"):
+                    pass
+            except FileNotFoundError:
+                continue
+            except (PermissionError, OSError) as e:
+                LOG.debug("savegame still locked: %s (%s)", db, e)
+                locked.append(db)
+                continue
+            # Sidecar files mean SQLite didn't finish a clean shutdown.
+            # The .vcdbs itself may be openable, but the next process
+            # has to roll the WAL/journal forward — that's the path
+            # that occasionally tripped the "not writable" error.
+            for suffix in ("-journal", "-wal", "-shm"):
+                sc = db + suffix
+                if os.path.exists(sc):
+                    try:
+                        size = os.path.getsize(sc)
+                    except OSError:
+                        size = 0
+                    # An empty -shm is normal; a non-empty -journal/-wal
+                    # is what we care about. Tracking all of them keeps
+                    # the surfaced error message useful.
+                    if size > 0 or suffix == "-journal":
+                        sidecars.append(sc)
+        return locked, sidecars
+
+    def _wait_for_savegame_unlocked_then(self, then_call, *,
+                                          context: str = "restart",
+                                          attempts: int = 0,
+                                          started: float = 0.0) -> None:
+        """Poll the savegame .vcdbs file every 500 ms; once it's
+        writable AND has no stray sidecar files, call `then_call()`.
+
+        Bounded at WAIT_CAP_SECS so we never hang forever. If the
+        cap is hit, we surface a notification + log line and DO NOT
+        call then_call — the user can manually retry once the lock
+        clears (almost always within a few seconds of seeing the
+        error).
+        """
+        WAIT_CAP_SECS = 60
+        POLL_MS = 500
+        if started <= 0:
+            started = time.time()
+        locked, sidecars = self._savegame_lock_status()
+        if not locked and not sidecars:
+            if attempts > 0:
+                waited_ms = int((time.time() - started) * 1000)
+                self.append_console(
+                    f"Savegame lock cleared after {waited_ms} ms — "
+                    f"proceeding with {context}.",
+                    "system")
+                LOG.info("savegame lock cleared after %d ms (%s)",
+                         waited_ms, context)
+            try:
+                then_call()
+            except Exception:
+                LOG.exception("post-lock-wait callback failed (%s)", context)
+            return
+        elapsed = time.time() - started
+        if elapsed >= WAIT_CAP_SECS:
+            # Don't relaunch into a guaranteed crash. Surface the
+            # exact files still locked so the user knows what to
+            # check (antivirus, leftover VS process, etc.).
+            blockers = []
+            if locked:
+                blockers.append("locked: " + ", ".join(
+                    os.path.basename(p) for p in locked))
+            if sidecars:
+                blockers.append("sidecars: " + ", ".join(
+                    os.path.basename(p) for p in sidecars))
+            detail = "; ".join(blockers) if blockers else "unknown"
+            msg = (f"Savegame still locked after {WAIT_CAP_SECS}s — "
+                   f"{context} aborted ({detail}). Check for a "
+                   f"leftover VintagestoryServer.exe in Task Manager, "
+                   f"or for antivirus scanning the world folder.")
+            self.append_console(msg, "error")
+            self._notify(
+                "Savegame locked — server NOT restarted.",
+                level="error", duration_ms=8000)
+            LOG.error("savegame lock probe gave up after %ds (%s): %s",
+                      WAIT_CAP_SECS, context, detail)
+            return
+        # Log progress on the first poll only — periodic polling
+        # logs would spam the console for slow-clearing locks.
+        if attempts == 0:
+            self.append_console(
+                f"Waiting for savegame lock to clear before {context}…",
+                "system")
+        self.after(POLL_MS, lambda: self._wait_for_savegame_unlocked_then(
+            then_call,
+            context=context,
+            attempts=attempts + 1,
+            started=started))
+
     def _force_kill_and_finalize(self, proc):
         try:
             proc.kill()
@@ -2043,6 +2261,7 @@ class ServerManagerApp(tk.Tk):
         self._pending_role_query.clear()
         self._player_roles.clear()
         self.server_process = None
+        self._psutil_proc = None
         self.cancel_autosave_job()
         try:
             self._autorun_scheduler.stop()
@@ -2051,11 +2270,28 @@ class ServerManagerApp(tk.Tk):
         self._cancel_cron_schedule()
         cbs = self._shutdown_callbacks[:]
         self._shutdown_callbacks.clear()
-        for cb in cbs:
-            try:
-                cb()
-            except Exception:
-                pass
+
+        def _run_callbacks(_ok: bool = True):
+            for cb in cbs:
+                try:
+                    cb()
+                except Exception:
+                    pass
+
+        # If a stop-time backup was requested, take it NOW — the process
+        # has exited, so the world files are quiescent — and only then
+        # fire the shutdown callbacks (restart's relaunch, window close).
+        # This also fixes app-exit truncating the backup: the daemon
+        # worker thread used to be killed when the window closed.
+        if self._pending_stop_backup:
+            self._pending_stop_backup = False
+            self.append_console(
+                "Stop backup starting — any restart/close continues "
+                "when it finishes…", "system")
+            self._start_async_backup(silent=True, reason="stop",
+                                     on_done=_run_callbacks)
+        else:
+            _run_callbacks()
 
     def restart_server(self):
         """Public restart entry-point. Honors the
@@ -2078,13 +2314,22 @@ class ServerManagerApp(tk.Tk):
         """Unconditional restart — bypasses the player-check guard.
         Called either directly (when the guard is off / no players)
         or after the user picks 'continue anyway' / once the server
-        is empty."""
+        is empty.
+
+        VSSM_DB_LOCK_RESTART_FIX_V1 — waits for the savegame DB to actually
+        release its file lock before relaunching. The previous 2s
+        sleep was insufficient on Windows after a forced terminate(),
+        leading to "Cannot open savegame database file ... it seems
+        to be not writable!" crashes that the auto-restart loop then
+        compounded into a crash-loop trip.
+        """
         if not self.is_running:
             return
         self.append_console("Restarting server…", "system")
         self.stop_server(
             skip_player_check=True,
-            on_done=lambda: self.after(2000, self.start_server))
+            on_done=lambda: self._wait_for_savegame_unlocked_then(
+                self.start_server, context="restart"))
 
     def _update_buttons_running(self, running: bool, shutting_down: bool = False):
         if shutting_down:
@@ -2135,6 +2380,11 @@ class ServerManagerApp(tk.Tk):
     # ------------------------------------------------------------------
     def _read_output(self):
         proc = self.server_process
+        # Capture the queue for THIS run — start_server swaps in a fresh
+        # queue per launch, so a lingering reader from a previous run can
+        # never inject its end-of-stream marker (None) into the new run
+        # and trigger spurious crash detection.
+        q = self.output_queue
         try:
             stdout = proc.stdout
             while True:
@@ -2145,10 +2395,10 @@ class ServerManagerApp(tk.Tk):
                     text = line.decode("utf-8", errors="replace")
                 except Exception:
                     text = repr(line)
-                self.output_queue.put(text)
+                q.put(text)
         except Exception as e:
             LOG.debug("Reader thread ending: %s", e)
-        self.output_queue.put(None)
+        q.put(None)
 
     def _process_queue(self):
         try:
@@ -2228,13 +2478,10 @@ class ServerManagerApp(tk.Tk):
         # it handles the angle-bracket form for custom-command dispatch.
         try:
             if tag == "chat":
-                strip_fn = __import__("core.parsers",
-                                      fromlist=["strip_log_prefix"]
-                                      ).strip_log_prefix
-                gid, p, m = parse_chat_with_group(raw, strip_fn=strip_fn)
+                gid, p, m = parse_chat_with_group(
+                    raw, strip_fn=strip_log_prefix)
                 if gid is not None and p and self._chat_log_tab is not None:
-                    import time as _t
-                    now = _t.time()
+                    now = time.time()
                     self._chat_store.append(gid, p, m or "", now=now)
                     # Marshal the UI update onto the Tk main thread —
                     # _handle_server_line runs from the output-queue
@@ -2250,10 +2497,9 @@ class ServerManagerApp(tk.Tk):
                     # flavor (mentions / states / exclaims / …) is
                     # preserved without a schema change.
                     verb, p2, body = parse_ungrouped_chat(
-                        raw, strip_fn=strip_fn)
+                        raw, strip_fn=strip_log_prefix)
                     if p2 and self._chat_log_tab is not None:
-                        import time as _t
-                        now = _t.time()
+                        now = time.time()
                         rendered = (f"{verb} {body}"
                                     if verb else body)
                         self._chat_store.append(
@@ -2292,6 +2538,7 @@ class ServerManagerApp(tk.Tk):
         self._pending_role_query.clear()
         self._player_roles.clear()
         self.server_process = None
+        self._psutil_proc = None
         if self.autorestart_var.get():
             if self._crash_loop_tripped():
                 msg = (f"Auto-restart disabled: {self.CRASH_LIMIT}+ crashes "
@@ -2299,8 +2546,14 @@ class ServerManagerApp(tk.Tk):
                 self.append_console(msg, "error")
                 self._notify(msg, level="error", duration_ms=8000)
                 return
-            self.append_console("Auto-restart enabled, restarting in 5s.", "system")
-            self.after(5000, self.start_server)
+            # VSSM_DB_LOCK_RESTART_FIX_V1 — gate the auto-restart on the
+            # savegame DB actually being writable. A crash caused by
+            # a stale DB lock will recur every 5s if we blindly relaunch;
+            # the wait helper polls the .vcdbs file until it's free
+            # (or surfaces a clear error after a safety cap).
+            self.append_console("Auto-restart enabled, waiting for savegame lock to clear…", "system")
+            self.after(5000, lambda: self._wait_for_savegame_unlocked_then(
+                self.start_server, context="auto-restart"))
 
     def _record_crash(self):
         now = time.time()
@@ -2352,6 +2605,11 @@ class ServerManagerApp(tk.Tk):
     def append_console(self, text: str, tag: str = "info"):
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.all_output_lines.append((timestamp, text, tag))
+        # Bound the scrollback so a long-running server can't grow
+        # memory without limit.
+        overflow = len(self.all_output_lines) - self.MAX_CONSOLE_LINES
+        if overflow > 0:
+            del self.all_output_lines[:overflow]
         filt = self.log_filter_var.get().lower()
         if filt and filt not in text.lower():
             return
@@ -2361,6 +2619,16 @@ class ServerManagerApp(tk.Tk):
         self.console_text.configure(state='normal')
         self.console_text.insert(tk.END, f"[{timestamp}] ", ("timestamp",))
         self.console_text.insert(tk.END, text + "\n", (tag,))
+        # Trim the widget to the same cap as all_output_lines. Cheap:
+        # one index query per append, deletion only on overflow.
+        try:
+            line_count = int(
+                self.console_text.index("end-1c").split(".")[0])
+            if line_count > self.MAX_CONSOLE_LINES:
+                self.console_text.delete(
+                    "1.0", f"{line_count - self.MAX_CONSOLE_LINES + 1}.0")
+        except (ValueError, tk.TclError):
+            pass
         self.console_text.see(tk.END)
         self.console_text.configure(state='disabled')
 
@@ -2528,6 +2796,10 @@ class ServerManagerApp(tk.Tk):
         self._rerender_players()
 
     def _rerender_players(self):
+        # Every row widget is about to be destroyed — drop the label
+        # refs so entries for players who left don't accumulate forever
+        # (_render_player_row re-registers the current players below).
+        self._player_timer_labels.clear()
         for child in list(self.player_list_frame.winfo_children()):
             child.destroy()
         if not self._players:
@@ -2610,6 +2882,28 @@ class ServerManagerApp(tk.Tk):
         except (ValueError, TypeError):
             return 0
 
+    def get_max_start_backups(self) -> int:
+        try:
+            return int(self.max_start_backups_var.get())
+        except (ValueError, TypeError):
+            return 0
+
+    def get_max_stop_backups(self) -> int:
+        try:
+            return int(self.max_stop_backups_var.get())
+        except (ValueError, TypeError):
+            return 0
+
+    def get_server_backups_dir(self) -> str:
+        """The Vintage Story server's own Backups folder — a sibling of
+        the Saves/world folder in the VintagestoryData layout. This is
+        where /genbackup writes its consistent savegame copies."""
+        world = (self.world_folder_var.get() or "").strip()
+        if not world:
+            return ""
+        return os.path.join(os.path.dirname(os.path.abspath(world)),
+                            "Backups")
+
     def get_retention_mode(self) -> str:
         var = getattr(self, "_retention_mode_var", None)
         if var is not None:
@@ -2631,9 +2925,12 @@ class ServerManagerApp(tk.Tk):
         return self._backup_manager.backup_world(silent=silent)
 
     def _start_async_backup(self, dst=None, silent: bool = False,
-                             reason: str = "manual") -> None:
+                             reason: str = "manual",
+                             on_done: Callable[[bool], None] | None = None
+                             ) -> None:
         self._backup_manager.start_async_backup(dst=dst, silent=silent,
-                                                  reason=reason)
+                                                  reason=reason,
+                                                  on_done=on_done)
 
     def cancel_active_backup(self) -> None:
         self._backup_manager.cancel_active_backup()
@@ -2794,8 +3091,14 @@ class ServerManagerApp(tk.Tk):
         self.autosave_job_id = self.after(ms, self._autosave_tick)
 
     def _autosave_tick(self):
-        if self.is_running and self.autosave_cmd_var.get():
-            self._send_internal_command("/autosavenow")
+        # VSSM_DB_LOCK_RESTART_FIX_V1 — the previous version sent /autosavenow
+        # here AND _start_async_backup(reason="autosave") sent it again
+        # ~20ms later (it has its own pre-backup save hook). One per
+        # autosave is correct; two was wasted IO and visible in the
+        # logs as duplicate "/autosavenow" sends at every interval.
+        # _start_async_backup handles the save+backup sequence itself,
+        # so we just announce the tick and hand off.
+        if self.is_running:
             self.append_console("Auto-save triggered.", "system")
         self._start_async_backup(silent=True, reason="autosave")
         self._schedule_autosave()
@@ -3103,16 +3406,29 @@ class ServerManagerApp(tk.Tk):
             proc = self.server_process
             if proc is None or proc.poll() is not None:
                 return
-            ps = psutil.Process(proc.pid)
-            cpu_pct = ps.cpu_percent(interval=None) / 100.0
+            # psutil.Process.cpu_percent(interval=None) reports CPU used
+            # since the previous call on the SAME instance — a freshly
+            # constructed instance has no baseline and returns 0.0. So
+            # keep one instance per server run and prime it on the first
+            # tick (real readings start on the second).
+            ps = self._psutil_proc
+            if ps is None or ps.pid != proc.pid:
+                ps = psutil.Process(proc.pid)
+                self._psutil_proc = ps
+                ps.cpu_percent(interval=None)
+                return
+            # cpu_percent sums across cores (can exceed 100); normalise
+            # by core count so the bar matches whole-machine usage.
+            cpu_frac = (ps.cpu_percent(interval=None) / 100.0
+                        / (psutil.cpu_count() or 1))
             mem_info = ps.memory_info()
             total_mem = psutil.virtual_memory().total
             mem_frac = mem_info.rss / max(1, total_mem)
             self._set_resource_bar(self.cpu_fill, self.cpu_label,
-                                   f"{cpu_pct * 100:.0f}%", cpu_pct)
+                                   f"{cpu_frac * 100:.0f}%", cpu_frac)
             self._set_resource_bar(self.mem_fill, self.mem_label,
                                    f"{fmt_size(mem_info.rss)}", mem_frac)
-            self.cpu_spark.push(cpu_pct)
+            self.cpu_spark.push(cpu_frac)
             self.mem_spark.push(mem_frac)
         except Exception:
             pass
@@ -3553,6 +3869,7 @@ def _fatal(err: Exception):
 # Entry point  (improvement #21: proper main() function)
 # ======================================================================
 def main():
+    global _CLI_LOG_LEVEL
     parser = argparse.ArgumentParser(description="VSSM — VS Server Manager")
     parser.add_argument("--log-level",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -3560,6 +3877,7 @@ def main():
                         help="Override log level (improvement #20)")
     args = parser.parse_args()
     if args.log_level:
+        _CLI_LOG_LEVEL = args.log_level
         LOG.setLevel(getattr(logging, args.log_level))
         LOG.info("Log level set to %s via --log-level", args.log_level)
     try:

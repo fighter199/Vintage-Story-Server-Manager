@@ -198,10 +198,10 @@ def _default_settings() -> dict:
         "crash_limit":       3,
         "crash_window_secs": 600,
         "log_level":         "DEBUG",
-        "player_count_poll_secs": 30,  # 0 = disabled
-        "header_collapsed":   False,  # 0 = disabled; otherwise seconds between
-                                       # automatic /list clients pings while
-                                       # the server is running.
+        "player_count_poll_secs": 30,  # 0 = disabled; otherwise seconds
+                                       # between automatic /list clients
+                                       # pings while the server is running.
+        "header_collapsed":   False,
     }
 
 

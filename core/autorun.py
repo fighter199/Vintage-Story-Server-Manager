@@ -199,13 +199,10 @@ class AutorunScheduler:
         for rule in self._snapshot():
             rid = self._rule_id(rule)
             if rule.get("run_on_start"):
-                # Fire NOW + schedule the regular interval after.
+                # Fire NOW; the regular interval is scheduled below.
                 self._fire_if_allowed(rule, now)
-                self._next_fire[rid] = now + max(1, int(
-                    rule.get("interval_secs", 300)))
-            else:
-                self._next_fire[rid] = now + max(1, int(
-                    rule.get("interval_secs", 300)))
+            self._next_fire[rid] = now + max(1, int(
+                rule.get("interval_secs", 300)))
 
     def stop(self) -> None:
         """Disarm all rules. Safe to call even if already stopped."""

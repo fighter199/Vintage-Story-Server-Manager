@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -20,7 +21,18 @@ from .parsers import parse_json5_ish
 # -----------------------------------------------------------------------
 def is_port_free(port: int, host: str = "0.0.0.0") -> bool:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # On Windows, SO_REUSEADDR lets bind() succeed even while another
+    # socket is actively LISTENING on the port — which made this check
+    # always report "free". SO_EXCLUSIVEADDRUSE restores the strict
+    # behaviour. On POSIX, SO_REUSEADDR is what we want: it avoids
+    # false "in use" results from sockets lingering in TIME_WAIT.
+    try:
+        if sys.platform.startswith("win"):
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    except (AttributeError, OSError):
+        pass
     try:
         s.bind((host, port))
         return True
@@ -44,7 +56,7 @@ def find_vs_port(server_dir: str) -> int:
             return port
         if isinstance(port, str) and port.isdigit():
             return int(port)
-    except (OSError, ValueError, Exception):
+    except Exception:
         pass
     return 42420
 
@@ -196,38 +208,118 @@ def backup_world_to_zip(src: str, dst: str, progress_cb=None, cancel_flag=None) 
         raise
 
 
+def backup_single_file_to_zip(src_file: str, dst: str,
+                              arcname: str | None = None) -> str:
+    """Zip one file (e.g. a server-generated /genbackup savegame) into
+    `dst`, with the same integrity check + atomic `.part` rename that
+    backup_world_to_zip uses. `arcname` controls the stored name/path
+    inside the archive (defaults to the file's own basename)."""
+    if not os.path.isfile(src_file):
+        raise RuntimeError(f"Source file does not exist: {src_file}")
+    part = dst + ".part"
+    try:
+        with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED,
+                             compresslevel=6, allowZip64=True) as zf:
+            zf.write(src_file, arcname=arcname or os.path.basename(src_file))
+        with zipfile.ZipFile(part, "r") as zf:
+            bad = zf.testzip()
+            if bad:
+                raise RuntimeError(
+                    f"Backup ZIP integrity check failed on: {bad}")
+        os.replace(part, dst)
+        return dst
+    except Exception:
+        try:
+            if os.path.exists(part):
+                os.remove(part)
+        except OSError:
+            pass
+        raise
+
+
 def restore_backup_zip(zip_path: str, dst_world_folder: str,
                        archive_existing: bool = True):
+    """Restore a world from a backup zip into `dst_world_folder`.
+
+    Handles both archive layouts:
+      - VSSM's own backups: a single top-level folder (named after the
+        world folder as it was when the backup was taken) containing
+        the world files
+      - bare zips: world files at the archive root
+
+    The top-level folder name inside the archive does NOT have to match
+    the configured world folder — contents always land in
+    `dst_world_folder`. (Previously the archive was extracted into the
+    world folder's parent under whatever name the zip carried, so a
+    backup taken from a differently-named world folder recreated the
+    old folder and left the configured one empty.)
+
+    The archive is fully extracted to a temp dir and validated BEFORE
+    the current world is archived/replaced, so a corrupt zip can never
+    destroy the existing world.
+    """
     if not os.path.isfile(zip_path):
         raise RuntimeError(f"Not a file: {zip_path}")
     if not zipfile.is_zipfile(zip_path):
         raise RuntimeError(f"Not a valid zip: {zip_path}")
     if not dst_world_folder:
         raise RuntimeError("No destination world folder given.")
-    parent = os.path.dirname(os.path.abspath(dst_world_folder)) or os.getcwd()
-    archived = None
-    if archive_existing and os.path.isdir(dst_world_folder):
-        import shutil
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        archived = os.path.join(parent, f"pre-restore-{ts}.zip")
-        backup_world_to_zip(dst_world_folder, archived)
-        try:
-            shutil.rmtree(dst_world_folder)
-        except OSError as e:
-            raise RuntimeError(f"Could not remove current world: {e}")
+    dst_world_folder = os.path.abspath(dst_world_folder)
+    parent = os.path.dirname(dst_world_folder) or os.getcwd()
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    tmp_extract = os.path.join(parent, f".restore-tmp-{ts}")
+
+    # 1. Extract to a temp dir first — the whole archive is unpacked
+    #    and checked before anything touches the current world.
     try:
-        os.makedirs(dst_world_folder, exist_ok=True)
+        os.makedirs(tmp_extract, exist_ok=True)
         with zipfile.ZipFile(zip_path, "r") as zf:
-            dest_root = os.path.abspath(parent)
+            dest_root = os.path.abspath(tmp_extract)
             for member in zf.namelist():
-                target = os.path.abspath(os.path.join(parent, member))
+                target = os.path.abspath(os.path.join(tmp_extract, member))
                 if not target.startswith(dest_root + os.sep) \
                         and target != dest_root:
-                    raise RuntimeError(f"Archive contains unsafe path: {member}")
-            zf.extractall(parent)
+                    raise RuntimeError(
+                        f"Archive contains unsafe path: {member}")
+            zf.extractall(tmp_extract)
     except Exception as e:
+        shutil.rmtree(tmp_extract, ignore_errors=True)
         raise RuntimeError(f"Extract failed: {e}")
-    return archived
+
+    try:
+        # 2. Locate the world root inside the extraction. Exactly one
+        #    top-level directory → our layout; anything else → world
+        #    files live at the archive root.
+        entries = os.listdir(tmp_extract)
+        if not entries:
+            raise RuntimeError("Archive is empty.")
+        if len(entries) == 1 and os.path.isdir(
+                os.path.join(tmp_extract, entries[0])):
+            src_root = os.path.join(tmp_extract, entries[0])
+        else:
+            src_root = tmp_extract
+
+        # 3. Archive, then remove, the current world.
+        archived = None
+        if os.path.isdir(dst_world_folder):
+            if archive_existing:
+                archived = os.path.join(parent, f"pre-restore-{ts}.zip")
+                backup_world_to_zip(dst_world_folder, archived)
+            try:
+                shutil.rmtree(dst_world_folder)
+            except OSError as e:
+                raise RuntimeError(f"Could not remove current world: {e}")
+
+        # 4. Move the restored world into place under the CONFIGURED
+        #    folder name — the name inside the archive doesn't matter.
+        shutil.move(src_root, dst_world_folder)
+        return archived
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Restore failed: {e}")
+    finally:
+        shutil.rmtree(tmp_extract, ignore_errors=True)
 
 
 # -----------------------------------------------------------------------
