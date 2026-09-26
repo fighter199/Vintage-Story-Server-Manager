@@ -68,13 +68,16 @@ from core.parsers import (classify_line, parse_player_event, split_client_list,
                            parse_chat_message, strip_log_prefix)
 from core.settings import (load_settings, save_settings, get_active_profile,
                             load_custom_commands, save_custom_commands,
-                            chat_log_path, load_player_totals)
+                            chat_log_path, load_player_totals,
+                            normalize_window_layout, fit_geometry)
 from core.custom_commands import ChatCommandDispatcher
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
                          clean_mod_filename, fmt_size, backup_world_to_zip,
                          restore_backup_zip, enable_windows_dpi_awareness)
-from ui.theme import Theme, pick_mono_font
-from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
+from ui.theme import (Theme, pick_mono_font, font_sizes,
+                      TEXT_SCALE_MIN, TEXT_SCALE_MAX)
+from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton, TabStrip,
+                        flow_row, reflow_all,
                          Sparkline, ScrollableFrame, themed_frame,
                          panel_header, collapsible_section, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
@@ -258,17 +261,17 @@ class ServerManagerApp(tk.Tk):
                 LOG.setLevel(getattr(logging, lvl))
 
         # ---- Display scaling -----------------------------------------
+        # Tk already converts font points to pixels using the display's
+        # DPI, so fonts are sized in points × the user's text-size factor
+        # only. `_ui_scale` (DPI × text size) sizes the window itself.
         self._auto_scale = self._detect_scale()
         try:
             self._user_scale = float(self._settings.get("ui_scale_override") or 1.0)
         except (TypeError, ValueError):
             self._user_scale = 1.0
-        self._user_scale = max(0.6, min(2.5, self._user_scale))
+        self._user_scale = max(TEXT_SCALE_MIN, min(TEXT_SCALE_MAX, self._user_scale))
         self._ui_scale   = self._auto_scale * self._user_scale
-        try:
-            self.tk.call("tk", "scaling", self._ui_scale * (96.0 / 72.0))
-        except tk.TclError:
-            pass
+        self.text_scale_var = tk.StringVar(value=f"{self._user_scale:.0%}")
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         win_w = min(int(sw * 0.75), max(1100, int(1280 * self._ui_scale)))
@@ -277,6 +280,13 @@ class ServerManagerApp(tk.Tk):
         y = max(0, (sh - win_h) // 3)
         self.geometry(f"{win_w}x{win_h}+{x}+{y}")
         self.minsize(min(900, int(sw * 0.6)), min(600, int(sh * 0.6)))
+        # Window layout from the last session (size/position, splits,
+        # selected tab) — see _save_window_layout.
+        self._layout = normalize_window_layout(self._settings.get("window_layout"))
+        saved = fit_geometry(self._layout.get("geometry", ""), self._virtual_screen())
+        if saved:
+            self.geometry(saved)
+        self._normal_geometry = saved or self.geometry()
 
         # ---- Theme ---------------------------------------------------
         preset = self._settings.get("theme_preset", "amber")
@@ -453,6 +463,9 @@ class ServerManagerApp(tk.Tk):
 
         self._build_ui()
         self._apply_default_paths()
+        self._init_folder_lists()
+        self._restore_sidebar_tab()
+        self._startup_complete = True
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         BootSplash(self, self.F_NORMAL, on_done=self._after_boot,
@@ -464,6 +477,9 @@ class ServerManagerApp(tk.Tk):
     def _after_boot(self):
         self.deiconify()
         self.lift()
+        if self._layout.get("zoomed"):
+            self._set_zoomed(True)
+        self.bind("<Configure>", self._track_normal_geometry, add="+")
         self._toast = ToastQueue(self, self.F_SMALL)
         self._blink_cursor()
         self._glow_title()
@@ -515,41 +531,49 @@ class ServerManagerApp(tk.Tk):
         return max(0.75, min(3.0, scale))
 
     def _rebuild_fonts(self):
-        pixel_fonts = self._mono_name.lower() in ("vt323", "share tech mono")
-        base = 14 if pixel_fonts else 11
-        base = max(9, round(base * self._ui_scale))
-        self.F_TITLE   = (self._mono_name, max(14, round(22 * self._ui_scale)), "bold")
-        self.F_SUB     = (self._mono_name, max(8,  round(10 * self._ui_scale)))
-        self.F_HDR     = (self._mono_name, max(9,  base - 2), "bold")
-        self.F_NORMAL  = (self._mono_name, max(8,  base - 3))
-        self.F_SMALL   = (self._mono_name, max(7,  base - 4))
-        self.F_BTN     = (self._mono_name, max(9,  base - 2), "bold")
-        self.F_CONSOLE = (self._mono_name, max(8,  base - 3))
+        """Create the F_* fonts, or resize them in place. They're named
+        Tk fonts, so every widget using one updates immediately — text
+        size changes apply live, no restart."""
+        pixel_font = self._mono_name.lower() in ("vt323", "share tech mono")
+        try:
+            aqua = self.tk.call("tk", "windowingsystem") == "aqua"
+        except tk.TclError:
+            aqua = False
+        for attr, (size, bold) in font_sizes(self._user_scale, pixel_font,
+                                             aqua).items():
+            weight = "bold" if bold else "normal"
+            font = getattr(self, attr, None)
+            if isinstance(font, tkfont.Font):
+                font.configure(family=self._mono_name, size=size, weight=weight)
+            else:
+                setattr(self, attr, tkfont.Font(self, family=self._mono_name,
+                                                size=size, weight=weight))
 
     def _bump_ui_scale(self, delta):
-        new = round(self._user_scale + delta, 2)
-        new = max(0.6, min(2.5, new))
-        if abs(new - self._user_scale) < 0.001:
+        self._set_text_scale(self._user_scale + delta)
+
+    def _reset_ui_scale(self):
+        self._set_text_scale(1.0)
+
+    def _set_text_scale(self, scale: float) -> None:
+        scale = round(max(TEXT_SCALE_MIN, min(TEXT_SCALE_MAX, scale)), 2)
+        if abs(scale - self._user_scale) < 0.001:
             return
-        self._user_scale = new
+        self._user_scale = scale
         self._ui_scale   = self._auto_scale * self._user_scale
         self._reapply_scale()
 
-    def _reset_ui_scale(self):
-        self._user_scale = 1.0
-        self._ui_scale   = self._auto_scale
-        self._reapply_scale()
-
     def _reapply_scale(self):
-        try:
-            self.tk.call("tk", "scaling", self._ui_scale * (96.0 / 72.0))
-        except tk.TclError:
-            pass
         self._rebuild_fonts()
         self._ttk_style_ready = False
         self._setup_ttk_style()
-        self._notify(f"UI scale {self._ui_scale:.2f}x — restart to fully apply.",
-                     level="info")
+        strip = getattr(self, "_tab_strip", None)
+        if strip is not None:
+            strip.relayout()
+        self.update_idletasks()          # new font metrics, then re-wrap
+        reflow_all()
+        self.text_scale_var.set(f"{self._user_scale:.0%}")
+        self._notify(f"Text size {self._user_scale:.0%}", level="info")
         self._settings["ui_scale_override"] = self._user_scale
         save_settings(self._settings)
 
@@ -591,6 +615,10 @@ class ServerManagerApp(tk.Tk):
                   background=[("selected", Theme.BG_PANEL), ("active", Theme.BG_PANEL)],
                   foreground=[("selected", Theme.AMBER_GLOW), ("active", Theme.AMBER)],
                   bordercolor=[("selected", Theme.BORDER)])
+        # Sidebar notebook: its tab row is drawn by ui.widgets.TabStrip.
+        style.configure("Strip.TNotebook", background=Theme.BG_PANEL,
+                        borderwidth=0, tabmargins=[0, 0, 0, 0])
+        style.layout("Strip.TNotebook.Tab", [])
         style.configure("Term.TPanedwindow",
                         background=Theme.BORDER, sashwidth=4,
                         sashrelief="flat")
@@ -715,6 +743,7 @@ class ServerManagerApp(tk.Tk):
         main_paned = ttk.PanedWindow(root_pad, orient=tk.HORIZONTAL,
                                      style="Term.TPanedwindow")
         main_paned.pack(fill=tk.BOTH, expand=True)
+        self._main_paned = main_paned
         console_col = tk.Frame(main_paned, bg=Theme.BG_DARK)
         main_paned.add(console_col, weight=3)
         self._build_console(console_col)
@@ -726,12 +755,15 @@ class ServerManagerApp(tk.Tk):
             try:
                 w = main_paned.winfo_width()
                 if w > 20:
-                    main_paned.sashpos(0, int(w * 0.6))
+                    main_paned.sashpos(
+                        0, int(w * self._layout.get("main_sash", 0.6)))
                 elif retry < 20:
                     self.after(100, lambda: _seed_main(retry + 1))
             except tk.TclError:
                 pass
         self.after(150, _seed_main)
+        main_paned.bind("<ButtonRelease-1>",
+                        lambda _e: self._save_window_layout(), add="+")
 
         self.server_path_var.trace_add('write', lambda *_: self._recompute_setup_warning())
         self.mods_folder_var.trace_add('write', lambda *_: self._recompute_setup_warning())
@@ -822,9 +854,9 @@ class ServerManagerApp(tk.Tk):
                       "Ctrl+Enter    send command\n"
                       "↑ / ↓         history\n"
                       "Right-click   copy / player actions\n"
-                      "Ctrl + =      larger UI\n"
-                      "Ctrl + −      smaller UI\n"
-                      "Ctrl + 0      reset UI scale",
+                      "Ctrl + =      larger text\n"
+                      "Ctrl + −      smaller text\n"
+                      "Ctrl + 0      reset text size",
                  fg=Theme.AMBER_DIM, bg=Theme.BG_DARK,
                  font=self.F_SMALL, justify=tk.RIGHT).pack(anchor="ne", pady=(2, 0))
 
@@ -832,9 +864,10 @@ class ServerManagerApp(tk.Tk):
         """Flip the header's collapsed state and persist."""
         self._set_header_collapsed(not self._header_collapsed)
 
-    def _set_header_collapsed(self, collapsed: bool):
+    def _set_header_collapsed(self, collapsed: bool, persist: bool = True):
         """Apply a specific collapsed state. Idempotent — re-applying
-        the same state is a cheap no-op."""
+        the same state is a cheap no-op. persist=False shows/hides it
+        for now without changing the saved preference."""
         collapsed = bool(collapsed)
         if collapsed == self._header_collapsed:
             return
@@ -857,7 +890,8 @@ class ServerManagerApp(tk.Tk):
                     before=self._header_separator)
         except (AttributeError, tk.TclError):
             pass
-        # Persist
+        if not persist:
+            return
         try:
             self._settings["header_collapsed"] = collapsed
             save_settings(self._settings)
@@ -902,46 +936,18 @@ class ServerManagerApp(tk.Tk):
                     warn_lbl.configure(text="")
         except (AttributeError, tk.TclError):
             pass
-        if new_text and not prev_text:
+        # Only for warnings that appear mid-session: while the window is
+        # being built the executable path isn't loaded yet, so every
+        # launch used to "discover" a warning, re-open the header and
+        # save it as open. The toolbar badge covers startup issues.
+        if new_text and not prev_text and getattr(self, "_startup_complete", False):
             try:
-                self._set_header_collapsed(False)
+                self._set_header_collapsed(False, persist=False)
             except Exception:
                 pass
 
     def _install_wrapping_row(self, container, widgets, spacing=8, pady_between=4):
-        container.pack_propagate(False)
-        try:
-            probe = widgets[0]
-            probe.update_idletasks()
-            container.configure(height=max(24, probe.winfo_reqheight() + 4))
-        except Exception:
-            container.configure(height=40)
-
-        def _reflow(_event=None):
-            try:
-                width = container.winfo_width()
-            except tk.TclError:
-                return
-            if width <= 1:
-                return
-            x = y = row_h = 0
-            sizes = []
-            for w in widgets:
-                w.update_idletasks()
-                sizes.append((w.winfo_reqwidth(), w.winfo_reqheight()))
-            for w, (ww, wh) in zip(widgets, sizes):
-                if x > 0 and x + ww > width:
-                    x = 0
-                    y += row_h + pady_between
-                    row_h = 0
-                w.place(x=x, y=y)
-                x += ww + spacing
-                if wh > row_h:
-                    row_h = wh
-            container.configure(height=max(24, y + row_h + 2))
-
-        container.bind("<Configure>", _reflow)
-        self.after(50, _reflow)
+        flow_row(container, widgets, spacing=spacing, pady_between=pady_between)
 
     # ------------------------------------------------------------------
     # Console panel
@@ -1071,7 +1077,9 @@ class ServerManagerApp(tk.Tk):
         nb_bg = tk.Frame(nb_panel.inner, bg=Theme.BG_PANEL)
         nb_bg.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
-        self.notebook = ttk.Notebook(nb_bg, style="Term.TNotebook")
+        self.notebook = ttk.Notebook(nb_bg, style="Strip.TNotebook")
+        self._tab_strip = TabStrip(nb_bg, self.notebook, self.F_SMALL)
+        self._tab_strip.pack(fill=tk.X, pady=(0, 4))
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         # Existing tabs (stubs that delegate to methods carried forward from v2)
@@ -1084,27 +1092,27 @@ class ServerManagerApp(tk.Tk):
             ("CUSTOM THEME", self._build_custom_theme_tab),
         ]:
             frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
-            self.notebook.add(frame, text=tab_name)
+            self._tab_strip.add(frame, text=tab_name)
             builder(frame)
 
         # NEW: Custom Commands tab
         custom_cmds_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
-        self.notebook.add(custom_cmds_frame, text="CUSTOM CMDS")
+        self._tab_strip.add(custom_cmds_frame, text="CUSTOM CMDS")
         self._custom_cmds_tab = CustomCommandsTab(custom_cmds_frame, self)
 
         # NEW: Chat Log tab — per-group chat history, persisted.
         chat_log_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
-        self.notebook.add(chat_log_frame, text="CHAT LOG")
+        self._tab_strip.add(chat_log_frame, text="CHAT LOG")
         self._chat_log_tab = ChatLogTab(chat_log_frame, self)
 
         # NEW: Autorun tab
         autorun_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
-        self.notebook.add(autorun_frame, text="AUTORUN")
+        self._tab_strip.add(autorun_frame, text="AUTORUN")
         self._autorun_tab = AutorunTab(autorun_frame, self)
 
         # World map: savegame viewer + chunk pruning (opens a window).
         world_map_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
-        self.notebook.add(world_map_frame, text="WORLD MAP")
+        self._tab_strip.add(world_map_frame, text="WORLD MAP")
         self._world_map_tab = WorldMapTab(world_map_frame, self)
         # Route every dispatch (fired or skipped) into the tab's audit
         # log. Use after_idle so audit updates always happen on the Tk
@@ -1117,12 +1125,15 @@ class ServerManagerApp(tk.Tk):
             try:
                 h = side_paned.winfo_height()
                 if h > 20:
-                    side_paned.sashpos(0, int(h * 0.25))
+                    side_paned.sashpos(
+                        0, int(h * self._layout.get("side_sash", 0.25)))
                 elif retry < 20:
                     self.after(100, lambda: _seed_side(retry + 1))
             except tk.TclError:
                 pass
         self.after(180, _seed_side)
+        side_paned.bind("<ButtonRelease-1>",
+                        lambda _e: self._save_window_layout(), add="+")
 
     # ------------------------------------------------------------------
     # Players + resources panel
@@ -1151,7 +1162,7 @@ class ServerManagerApp(tk.Tk):
             self._make_resource_bar(res, "Memory")
         if not PSUTIL_AVAILABLE:
             tk.Label(res, text="(psutil not installed — metrics disabled)",
-                     fg=Theme.AMBER_FAINT, bg=Theme.BG_PANEL,
+                     fg=Theme.MUTED, bg=Theme.BG_PANEL,
                      font=self.F_SMALL).pack(anchor=tk.W, pady=(4, 0))
 
     def _make_resource_bar(self, parent, label_text):
@@ -1185,7 +1196,7 @@ class ServerManagerApp(tk.Tk):
     def _render_empty_players(self):
         tk.Label(self.player_list_frame,
                  text="— No players connected —",
-                 fg=Theme.AMBER_FAINT, bg=Theme.BG_PANEL,
+                 fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=self.F_NORMAL, pady=20).pack()
 
     def _render_player_row(self, name: str):
@@ -1747,6 +1758,140 @@ class ServerManagerApp(tk.Tk):
         self._apply_cron_schedule()
         # Reschedule the player-count poller in case the interval changed.
         self._reschedule_player_count_poll()
+
+    # ------------------------------------------------------------------
+    # Window layout persistence
+    # ------------------------------------------------------------------
+    def _virtual_screen(self) -> tuple:
+        """(x, y, width, height) of the desktop across all monitors."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                metrics = ctypes.windll.user32.GetSystemMetrics
+                box = tuple(metrics(i) for i in (76, 77, 78, 79))
+                if box[2] > 0 and box[3] > 0:
+                    return box
+            except Exception:
+                pass
+        return (0, 0, self.winfo_screenwidth(), self.winfo_screenheight())
+
+    def _is_zoomed(self) -> bool:
+        try:
+            if self.state() == "zoomed":                   # Windows / macOS
+                return True
+            return bool(self.attributes("-zoomed"))        # X11
+        except tk.TclError:
+            return False
+
+    def _set_zoomed(self, zoomed: bool) -> None:
+        try:
+            self.state("zoomed" if zoomed else "normal")
+        except tk.TclError:
+            try:
+                self.attributes("-zoomed", bool(zoomed))
+            except tk.TclError:
+                pass
+
+    def _track_normal_geometry(self, event) -> None:
+        # The root's binding also sees every child's <Configure>.
+        if event.widget is not self:
+            return
+        try:
+            if self.state() == "normal" and not self._is_zoomed():
+                self._normal_geometry = self.geometry()
+        except tk.TclError:
+            pass
+
+    def _restore_sidebar_tab(self) -> None:
+        wanted = self._layout.get("tab")
+        if not wanted:
+            return
+        for tab in self.notebook.tabs():
+            if self.notebook.tab(tab, "text") == wanted:
+                self.notebook.select(tab)
+                return
+
+    def _save_window_layout(self) -> None:
+        """Remember window size/position, maximized state, the console
+        and sidebar splits, and the open sidebar tab for next launch."""
+        layout = dict(self._layout)
+        layout["geometry"] = self._normal_geometry
+        layout["zoomed"] = self._is_zoomed()
+        for key, paned, size in (
+                ("main_sash", getattr(self, "_main_paned", None), "width"),
+                ("side_sash", getattr(self, "_sidebar_paned", None), "height")):
+            try:
+                total = getattr(paned, f"winfo_{size}")()
+                if total > 50:
+                    layout[key] = round(paned.sashpos(0) / total, 3)
+            except (AttributeError, tk.TclError):
+                pass
+        try:
+            layout["tab"] = self.notebook.tab(self.notebook.select(), "text")
+        except tk.TclError:
+            pass
+        layout = normalize_window_layout(layout)
+        if layout != self._settings.get("window_layout"):
+            self._layout = layout
+            self._settings["window_layout"] = layout
+            try:
+                save_settings(self._settings)
+            except Exception:
+                LOG.exception("saving window layout failed")
+
+    # ------------------------------------------------------------------
+    # MODS / BACKUP lists follow their folders
+    # ------------------------------------------------------------------
+    def _init_folder_lists(self) -> None:
+        """Fill the MODS and BACKUP lists once the saved folder paths
+        are applied (the tabs are built before that, so they used to
+        start empty), then keep them current: on folder edits and
+        whenever their tab is opened."""
+        self._mods_list_sig = None
+        self._folder_refresh_jobs: dict = {}
+        self._refresh_backup_list()
+        self._load_mods_if_changed(force=True)
+        self.mods_folder_var.trace_add(
+            "write", lambda *_: self._schedule_folder_refresh("mods"))
+        self.backup_dir_var.trace_add(
+            "write", lambda *_: self._schedule_folder_refresh("backups"))
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           self._on_sidebar_tab_changed, add="+")
+
+    def _schedule_folder_refresh(self, which: str) -> None:
+        # Debounced: a path typed into SETTINGS fires on every keystroke.
+        job = self._folder_refresh_jobs.pop(which, None)
+        if job is not None:
+            self.after_cancel(job)
+        fn = (self._refresh_backup_list if which == "backups"
+              else lambda: self._load_mods_if_changed(force=True))
+        self._folder_refresh_jobs[which] = self.after(400, fn)
+
+    def _on_sidebar_tab_changed(self, _event=None) -> None:
+        try:
+            text = self.notebook.tab(self.notebook.select(), "text")
+        except tk.TclError:
+            return
+        if text == "BACKUP":
+            self._refresh_backup_list()
+        elif text == "MODS":
+            self._load_mods_if_changed()
+
+    def _load_mods_if_changed(self, force: bool = False) -> None:
+        """Reload the installed-mods list if the Mods folder changed
+        (path or contents) since the last load. Parsing every mod's
+        modinfo isn't free, so tab switches skip it when nothing moved."""
+        folder = self.mods_folder_var.get().strip()
+        try:
+            sig = (folder, os.path.getmtime(folder)) if folder else (folder, None)
+        except OSError:
+            sig = (folder, None)
+        if force or sig != self._mods_list_sig:
+            self._mods_list_sig = sig
+            try:
+                self.load_mods()
+            except Exception:
+                LOG.exception("loading the mod list failed")
 
     def _apply_default_paths(self):
         profile = get_active_profile(self._settings)
@@ -3585,6 +3730,10 @@ class ServerManagerApp(tk.Tk):
             LOG.exception("chat store flush failed")
 
     def on_closing(self):
+        try:
+            self._save_window_layout()
+        except Exception:
+            LOG.exception("saving window layout on close failed")
         # Flush the chat-log store first so any unsaved messages land
         # on disk even if the rest of shutdown is interrupted.
         try:
@@ -3908,6 +4057,9 @@ def main():
         _CLI_LOG_LEVEL = args.log_level
         LOG.setLevel(getattr(logging, args.log_level))
         LOG.info("Log level set to %s via --log-level", args.log_level)
+    # Without this Windows renders VSSM at 96 DPI and stretches it on
+    # 125–200 % displays, which blurs all the text.
+    enable_windows_dpi_awareness()
     try:
         app = ServerManagerApp()
         app.mainloop()

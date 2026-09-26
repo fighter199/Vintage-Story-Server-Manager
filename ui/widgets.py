@@ -289,6 +289,165 @@ class ScrollableFrame(tk.Frame):
 
 
 # -----------------------------------------------------------------------
+# TabStrip — wrapping tab row for a ttk.Notebook
+# -----------------------------------------------------------------------
+class TabStrip(tk.Frame):
+    """A row of tab labels that wraps onto more lines, driving a
+    ttk.Notebook whose own tab row is hidden (style "Strip.TNotebook").
+
+    ttk.Notebook squeezes tab labels to fit its width, so ten tabs in a
+    narrow sidebar were cut down to "CO", "SE", "BA". This strip keeps
+    every label whole at any width or text size."""
+
+    def __init__(self, parent, notebook, font_spec, spacing=2):
+        super().__init__(parent, bg=Theme.BG_PANEL, height=1,
+                         highlightthickness=0, bd=0)
+        self._nb = notebook
+        self._font = font_spec
+        self._spacing = spacing
+        self._tabs: list = []            # (frame, label)
+        self._job = None
+        self.bind("<Configure>", lambda _e: self.relayout())
+        notebook.bind("<<NotebookTabChanged>>", lambda _e: self._restyle(),
+                      add="+")
+
+    def add(self, frame, text: str) -> None:
+        self._nb.add(frame, text=text)
+        lbl = tk.Label(self, text=text, font=self._font, padx=10, pady=4,
+                       bd=0, highlightthickness=1, cursor="hand2")
+        lbl.bind("<Button-1>", lambda _e, f=frame: self._nb.select(f))
+        lbl.bind("<Enter>", lambda _e, w=lbl: self._hover(w, True))
+        lbl.bind("<Leave>", lambda _e, w=lbl: self._hover(w, False))
+        self._tabs.append((frame, lbl))
+        self._restyle()
+        self.relayout()
+
+    def _selected(self, frame) -> bool:
+        try:
+            return str(frame) == self._nb.select()
+        except tk.TclError:
+            return False
+
+    def _restyle(self) -> None:
+        for frame, lbl in self._tabs:
+            sel = self._selected(frame)
+            lbl.configure(bg=Theme.BG_SELECT if sel else Theme.BG_DARK,
+                          fg=Theme.AMBER_GLOW if sel else Theme.AMBER_DIM,
+                          highlightbackground=Theme.AMBER if sel else Theme.BORDER,
+                          highlightcolor=Theme.AMBER if sel else Theme.BORDER)
+
+    def _hover(self, lbl, inside: bool) -> None:
+        for frame, other in self._tabs:
+            if other is lbl and not self._selected(frame):
+                lbl.configure(fg=Theme.AMBER if inside else Theme.AMBER_DIM)
+
+    def relayout(self) -> None:
+        """Re-wrap the labels (call after the font size changes)."""
+        if self._job is None:
+            self._job = self.after_idle(self._reflow)
+
+    def _reflow(self) -> None:
+        self._job = None
+        width = self.winfo_width()
+        if width <= 1:
+            return
+        x = y = row_h = 0
+        for _frame, lbl in self._tabs:
+            w, h = lbl.winfo_reqwidth(), lbl.winfo_reqheight()
+            if x and x + w > width:
+                x = 0
+                y += row_h + self._spacing
+                row_h = 0
+            lbl.place(x=x, y=y)
+            x += w + self._spacing
+            row_h = max(row_h, h)
+        height = max(1, y + row_h)
+        if int(self.cget("height")) != height:
+            self.configure(height=height)
+
+
+# -----------------------------------------------------------------------
+# Responsive layout — rows that wrap, labels that re-wrap
+# -----------------------------------------------------------------------
+_FLOW_ROWS: list = []          # (container, reflow) for reflow_all()
+
+
+def flow_row(container, widgets, spacing=8, pady_between=4):
+    """Lay `widgets` (children of `container`) out left to right,
+    wrapping onto more lines when the row is too narrow — instead of the
+    last ones being cut off in a narrow panel or at a large text size."""
+    container.pack_propagate(False)
+    try:
+        probe = widgets[0]
+        probe.update_idletasks()
+        container.configure(height=max(24, probe.winfo_reqheight() + 4))
+    except Exception:
+        container.configure(height=40)
+
+    def _reflow(_event=None):
+        try:
+            width = container.winfo_width()
+        except tk.TclError:
+            return
+        if width <= 1:
+            return
+        x = y = row_h = 0
+        for w in widgets:
+            ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+            if x > 0 and x + ww > width:
+                x = 0
+                y += row_h + pady_between
+                row_h = 0
+            w.place(x=x, y=y)
+            x += ww + spacing
+            row_h = max(row_h, wh)
+        height = max(24, y + row_h + 2)
+        if int(container.cget("height")) != height:
+            container.configure(height=height)
+
+    container.bind("<Configure>", _reflow, add="+")
+    container.after(50, _reflow)
+    _FLOW_ROWS.append((container, _reflow))
+    return _reflow
+
+
+def flow_children(container, spacing=6, pady_between=4):
+    """flow_row() over every child already packed into `container`."""
+    return flow_row(container, list(container.winfo_children()),
+                    spacing=spacing, pady_between=pady_between)
+
+
+def auto_wrap(label, minimum=120):
+    """Wrap a label's text to the width it's actually given rather than
+    a fixed wraplength (which clips in narrow panels). Pack it with
+    fill=tk.X so it follows its parent's width. Returns the label."""
+    label.configure(anchor=tk.W, justify=tk.LEFT)
+
+    def _fit(event):
+        width = max(minimum, event.width - 4)
+        if int(label.cget("wraplength")) != width:
+            label.configure(wraplength=width)
+
+    label.bind("<Configure>", _fit, add="+")
+    return label
+
+
+def reflow_all() -> None:
+    """Re-run every flow_row (after the text size changed, a row's width
+    doesn't change so it gets no <Configure> of its own)."""
+    alive = []
+    for container, reflow in _FLOW_ROWS:
+        try:
+            if not container.winfo_exists():
+                continue
+        except tk.TclError:
+            continue
+        reflow()
+        alive.append((container, reflow))
+    _FLOW_ROWS[:] = alive
+
+
+# -----------------------------------------------------------------------
 # Layout helpers
 # -----------------------------------------------------------------------
 def themed_frame(parent, bg=Theme.BG_PANEL, border=True, border_color=None):

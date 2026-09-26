@@ -17,7 +17,7 @@ from datetime import datetime
 from tkinter import simpledialog, messagebox, ttk
 
 from .theme import Theme
-from .widgets import TermButton, panel_header
+from .widgets import TermButton, auto_wrap, panel_header
 
 
 class ChatLogTab:
@@ -95,7 +95,8 @@ class ChatLogTab:
             fg=Theme.MUTED, bg=Theme.BG_PANEL,
             font=self._app.F_SMALL, justify=tk.LEFT, wraplength=900,
         )
-        sub.pack(anchor=tk.W, padx=6, pady=(0, 4))
+        sub.pack(anchor=tk.W, fill=tk.X, padx=6, pady=(0, 4))
+        auto_wrap(sub)
 
         # Toolbar — rename, clear group, clear all
         toolbar = tk.Frame(outer, bg=Theme.BG_PANEL)

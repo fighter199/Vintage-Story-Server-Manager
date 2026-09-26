@@ -14,13 +14,36 @@ from tkinter import ttk
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                       Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section)
+                      panel_header, collapsible_section, flow_children,
+                      auto_wrap)
 
 
 def build_settings_tab(parent, app):
     sf = ScrollableFrame(parent, bg=Theme.BG_PANEL)
     sf.pack(fill=tk.BOTH, expand=True)
     pad = sf.body
+    # Text size — applies live to every font in the app.
+    size_row = tk.Frame(pad, bg=Theme.BG_PANEL)
+    size_row.pack(fill=tk.X, padx=10, pady=(8, 0))
+    tk.Label(size_row, text="Text size:", fg=Theme.AMBER_DIM,
+             bg=Theme.BG_PANEL, font=app.F_SMALL).pack(side=tk.LEFT)
+    TermButton(size_row, "A−", lambda: app._bump_ui_scale(-0.1),
+               variant="amber", font_spec=app.F_SMALL,
+               padx=8, pady=2).pack(side=tk.LEFT, padx=(6, 0))
+    tk.Label(size_row, textvariable=app.text_scale_var, width=5,
+             fg=Theme.AMBER_GLOW, bg=Theme.BG_PANEL,
+             font=app.F_NORMAL).pack(side=tk.LEFT, padx=4)
+    TermButton(size_row, "A+", lambda: app._bump_ui_scale(+0.1),
+               variant="amber", font_spec=app.F_SMALL,
+               padx=8, pady=2).pack(side=tk.LEFT)
+    TermButton(size_row, "Reset", app._reset_ui_scale,
+               variant="amber", font_spec=app.F_SMALL,
+               padx=8, pady=2).pack(side=tk.LEFT, padx=(6, 0))
+    tk.Label(size_row, text="(Ctrl +  Ctrl −  Ctrl 0)",
+             fg=Theme.MUTED, bg=Theme.BG_PANEL,
+             font=app.F_SMALL).pack(side=tk.LEFT, padx=(8, 0))
+    flow_children(size_row)
+
     # Server paths — entry, Browse, and Open in file manager
     for label, var, browse_fn, open_fn in [
         ("Mods Folder",        app.mods_folder_var,  app.browse_mods_folder,   app.open_mods_folder),
@@ -70,6 +93,7 @@ def build_settings_tab(parent, app):
     tk.Label(crash_row, text="secs → auto-restart disabled",
              fg=Theme.MUTED, bg=Theme.BG_PANEL,
              font=app.F_SMALL).pack(side=tk.LEFT)
+    flow_children(crash_row)
 
     # Player-count poll interval
     poll_row = tk.Frame(pad, bg=Theme.BG_PANEL)
@@ -84,6 +108,7 @@ def build_settings_tab(parent, app):
     tk.Label(poll_row, text="seconds  (0 = disabled)",
              fg=Theme.MUTED, bg=Theme.BG_PANEL,
              font=app.F_SMALL).pack(side=tk.LEFT)
+    flow_children(poll_row)
     tk.Label(
         pad,
         text=("How often VSSM sends /list clients to refresh the player "
@@ -92,7 +117,8 @@ def build_settings_tab(parent, app):
               "the server log."),
         fg=Theme.MUTED, bg=Theme.BG_PANEL,
         font=app.F_SMALL, justify=tk.LEFT, wraplength=620,
-    ).pack(anchor=tk.W, padx=10, pady=(2, 0))
+    ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(2, 0))
+    auto_wrap(pad.winfo_children()[-1])
 
     # Checkboxes
     for text, var in [
@@ -142,7 +168,8 @@ def build_settings_tab(parent, app):
         ),
         fg=Theme.MUTED, bg=Theme.BG_PANEL,
         font=app.F_SMALL, justify=tk.LEFT, wraplength=620,
-    ).pack(anchor=tk.W, padx=10, pady=(2, 0))
+    ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(2, 0))
+    auto_wrap(pad.winfo_children()[-1])
 
     # Auto-save interval
     row2 = tk.Frame(pad, bg=Theme.BG_PANEL)
@@ -180,7 +207,8 @@ def build_settings_tab(parent, app):
         ),
         fg=Theme.MUTED, bg=Theme.BG_PANEL,
         font=app.F_SMALL, justify=tk.LEFT, wraplength=620,
-    ).pack(anchor=tk.W, padx=10, pady=(2, 0))
+    ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(2, 0))
+    auto_wrap(pad.winfo_children()[-1])
 
     # Shutdown timeout
     row3 = tk.Frame(pad, bg=Theme.BG_PANEL)
@@ -225,7 +253,8 @@ def build_settings_tab(parent, app):
                    "for a long time and accumulating rotated backups."),
              fg=Theme.MUTED, bg=Theme.BG_PANEL,
              font=app.F_SMALL, justify=tk.LEFT, wraplength=620,
-             ).pack(anchor=tk.W, padx=10, pady=(1, 0))
+             ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(1, 0))
+    auto_wrap(pad.winfo_children()[-1])
 
     # Save button
     TermButton(pad, "💾 Save Settings", app._save_profile_settings,

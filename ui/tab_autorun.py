@@ -30,7 +30,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermCheckbutton, TermText,
-                      ScrollableFrame, panel_header)
+                      ScrollableFrame, panel_header, flow_children,
+                      auto_wrap)
 from core.autorun import (AutorunAudit, expand_commands, make_empty_rule,
                           normalize_rule, validate_rule)
 
@@ -120,7 +121,8 @@ class AutorunTab:
             fg=Theme.MUTED, bg=Theme.BG_PANEL,
             font=self._app.F_SMALL, justify=tk.LEFT,
         )
-        sub.pack(anchor=tk.W, padx=6, pady=(0, 4))
+        sub.pack(anchor=tk.W, fill=tk.X, padx=6, pady=(0, 4))
+        auto_wrap(sub)
 
         # Bottom-up packing so narrow windows don't clip the audit strip.
         help_row = tk.Frame(outer, bg=Theme.BG_DARK)
@@ -132,7 +134,8 @@ class AutorunTab:
                   "not from when the rule was edited."),
             fg=Theme.MUTED, bg=Theme.BG_DARK,
             font=self._app.F_SMALL, wraplength=900, justify=tk.LEFT,
-        ).pack(anchor=tk.W, padx=6)
+        ).pack(anchor=tk.W, fill=tk.X, padx=6)
+        auto_wrap(help_row.winfo_children()[-1])
 
         self._build_audit_panel(outer)
 
@@ -164,6 +167,7 @@ class AutorunTab:
         TermButton(btn_row, "Delete", self._on_delete,
                    variant="stop", font_spec=self._app.F_SMALL,
                    padx=8, pady=3).pack(side=tk.LEFT)
+        flow_children(btn_row, spacing=4)
 
         list_wrap = tk.Frame(parent, bg=Theme.BORDER)
         list_wrap.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)

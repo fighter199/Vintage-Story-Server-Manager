@@ -326,15 +326,16 @@ def restore_backup_zip(zip_path: str, dst_world_folder: str,
 # HiDPI (Windows)
 # -----------------------------------------------------------------------
 def enable_windows_dpi_awareness():
+    """Render at the display's real DPI instead of being bitmap-stretched
+    (blurry) by Windows. Must run before the Tk root is created.
+
+    System-DPI awareness (1), the same as IDLE uses: Tk 8.6 can't rescale
+    a window when per-monitor awareness (2) reports a DPI change, so that
+    mode would leave text the wrong size after moving between monitors."""
     if sys.platform != "win32":
         return
     try:
         import ctypes
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
-            return
-        except Exception:
-            pass
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
             return

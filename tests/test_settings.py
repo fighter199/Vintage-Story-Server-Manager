@@ -209,3 +209,44 @@ class TestSettingsImportExportShims:
         payload = json.dumps([{"trigger": "!hi", "response": "/say"}])
         out = cs.import_rules_from_json(payload)
         assert out[0]["trigger"] == "!hi"
+
+
+class TestWindowLayout:
+    def test_normalize_keeps_valid_values(self):
+        from core.settings import normalize_window_layout
+        raw = {"geometry": "1400x900+120+-8", "zoomed": True,
+               "main_sash": 0.55, "side_sash": 0.3, "tab": "BACKUP"}
+        assert normalize_window_layout(raw) == raw
+
+    def test_normalize_drops_bad_values(self):
+        from core.settings import normalize_window_layout
+        raw = {"geometry": "huge", "zoomed": "yes", "main_sash": 5,
+               "side_sash": True, "tab": "", "extra": 1}
+        assert normalize_window_layout(raw) == {}
+        assert normalize_window_layout(None) == {}
+        assert normalize_window_layout(["x"]) == {}
+
+    def test_fit_geometry_keeps_onscreen_window(self):
+        from core.settings import fit_geometry
+        assert fit_geometry("1200x800+100+50", (0, 0, 1920, 1080)) == "1200x800+100+50"
+
+    def test_fit_geometry_pulls_back_window_from_missing_monitor(self):
+        from core.settings import fit_geometry
+        # Saved on a second monitor to the right that's no longer there.
+        assert fit_geometry("1200x800+2500+100", (0, 0, 1920, 1080)) == "1200x800+720+100"
+        # Maximized-style negative offsets are clamped to the edge.
+        assert fit_geometry("1200x800+-8+-8", (0, 0, 1920, 1080)) == "1200x800+0+0"
+
+    def test_fit_geometry_shrinks_oversized_window(self):
+        from core.settings import fit_geometry
+        assert fit_geometry("3000x2000+0+0", (0, 0, 1920, 1080)) == "1920x1080+0+0"
+
+    def test_fit_geometry_left_monitor_desktop(self):
+        from core.settings import fit_geometry
+        # Virtual desktop starting left of the primary monitor.
+        screen = (-1920, 0, 3840, 1080)
+        assert fit_geometry("1000x700+-1500+200", screen) == "1000x700+-1500+200"
+
+    def test_fit_geometry_rejects_garbage(self):
+        from core.settings import fit_geometry
+        assert fit_geometry("nope", (0, 0, 800, 600)) is None

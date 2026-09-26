@@ -3,7 +3,6 @@ ui/theme.py — Color constants, CRT palettes, and font resolution.
 """
 from __future__ import annotations
 
-import tkinter.font as tkfont
 
 
 def _is_valid_hex_color(value) -> bool:
@@ -19,8 +18,11 @@ def _is_valid_hex_color(value) -> bool:
 
 
 class Theme:
+    # Text colours (AMBER*, MUTED, GREEN, RED, CYAN, PURPLE) are kept at
+    # a WCAG contrast of at least 4.5:1 against every panel background
+    # in every built-in preset — tests/test_theme.py enforces it.
     AMBER         = "#ffb000"
-    AMBER_DIM     = "#996a00"
+    AMBER_DIM     = "#b57d00"
     AMBER_GLOW    = "#ffcc44"
     AMBER_FAINT   = "#443300"
     GREEN         = "#33ff33"
@@ -42,20 +44,20 @@ class Theme:
     BG_SELECT     = "#2a1d00"
     BORDER        = "#332200"
     DIVIDER       = "#1a1a1a"
-    MUTED         = "#555555"
+    MUTED         = "#878787"
     DOT_OFF       = "#333333"
 
     PRESETS = {
         "amber": {},
         "green": {
-            "AMBER": "#33ff33", "AMBER_DIM": "#1a8a1a",
+            "AMBER": "#33ff33", "AMBER_DIM": "#1e9d1e",
             "AMBER_GLOW": "#88ff88", "AMBER_FAINT": "#113311",
             "BG_HEADER": "#001800", "BG_BTN_AMBER": "#001800",
             "BG_BTN_AMBER_HOVER": "#002b00", "BG_SELECT": "#003300",
             "BORDER": "#0a3a0a",
         },
         "cyan": {
-            "AMBER": "#44ffff", "AMBER_DIM": "#1a8a8a",
+            "AMBER": "#44ffff", "AMBER_DIM": "#1d9999",
             "AMBER_GLOW": "#aaffff", "AMBER_FAINT": "#113333",
             "BG_HEADER": "#001818", "BG_BTN_AMBER": "#001818",
             "BG_BTN_AMBER_HOVER": "#002b2b", "BG_SELECT": "#003333",
@@ -63,7 +65,7 @@ class Theme:
         },
         # Neutral dark mode (improvement #13)
         "dark": {
-            "AMBER": "#e0e0e0", "AMBER_DIM": "#888888",
+            "AMBER": "#e0e0e0", "AMBER_DIM": "#aaaaaa",
             "AMBER_GLOW": "#ffffff", "AMBER_FAINT": "#2a2a2a",
             "BG_HEADER": "#1e1e1e", "BG_BTN_AMBER": "#1e1e1e",
             "BG_BTN_AMBER_HOVER": "#2e2e2e", "BG_SELECT": "#3a3a3a",
@@ -103,7 +105,7 @@ class Theme:
     @classmethod
     def _reset_to_amber(cls):
         cls.AMBER        = "#ffb000"
-        cls.AMBER_DIM    = "#996a00"
+        cls.AMBER_DIM    = "#b57d00"
         cls.AMBER_GLOW   = "#ffcc44"
         cls.AMBER_FAINT  = "#443300"
         cls.BG_HEADER    = "#1a1200"
@@ -123,8 +125,52 @@ FONT_CANDIDATES = [
 
 
 def pick_mono_font(root) -> str:
+    import tkinter.font as tkfont
     available = {f.lower() for f in tkfont.families(root)}
     for name in FONT_CANDIDATES:
         if name.lower() in available:
             return name
     return "Courier"
+
+
+# -----------------------------------------------------------------------
+# Font sizes
+# -----------------------------------------------------------------------
+# Point sizes at 100% text size. Tk converts points to pixels using the
+# display's DPI, so these are NOT multiplied by a DPI factor as well —
+# doing both made text grow with the square of the scale.
+FONT_LADDER = {
+    "F_TITLE":   (22, True),
+    "F_SUB":     (10, False),
+    "F_HDR":     (10, True),
+    "F_NORMAL":  (10, False),
+    "F_SMALL":   (9,  False),
+    "F_BTN":     (10, True),
+    "F_CONSOLE": (10, False),
+}
+TEXT_SCALE_MIN = 0.7
+TEXT_SCALE_MAX = 2.0
+
+
+def font_sizes(text_scale: float = 1.0, pixel_font: bool = False,
+               aqua: bool = False) -> dict:
+    """{font attribute: (size in points, bold)} for a text-size factor.
+
+    Pixel fonts (VT323, Share Tech Mono) draw small for their point
+    size, and macOS maps 1 pt to 1 logical pixel (Windows/Linux: 1.33),
+    so both get a boost to look the same size as elsewhere."""
+    text_scale = max(TEXT_SCALE_MIN, min(TEXT_SCALE_MAX, text_scale))
+    extra = (3 if pixel_font else 0) + (3 if aqua else 0)
+    return {name: (max(7, round((pt + extra) * text_scale)), bold)
+            for name, (pt, bold) in FONT_LADDER.items()}
+
+
+def contrast_ratio(fg: str, bg: str) -> float:
+    """WCAG 2 contrast ratio between two #rrggbb colours."""
+    def lum(color: str) -> float:
+        c = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4
+             for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    hi, lo = sorted((lum(fg), lum(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)

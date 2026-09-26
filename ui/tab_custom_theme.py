@@ -15,7 +15,7 @@ from tkinter import colorchooser, ttk
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                       Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section)
+                      panel_header, collapsible_section, auto_wrap)
 
 
 _HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
@@ -44,7 +44,8 @@ def build_custom_theme_tab(parent, app):
                   "code. Changes take effect after Save + restart.",
              fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
              font=app.F_SMALL, pady=8, justify=tk.LEFT,
-             ).pack(anchor=tk.W)
+             ).pack(anchor=tk.W, fill=tk.X)
+    auto_wrap(pad.winfo_children()[-1])
     app._custom_color_vars: dict = {}
     sf = ScrollableFrame(pad, bg=Theme.BG_PANEL)
     sf.pack(fill=tk.BOTH, expand=True)

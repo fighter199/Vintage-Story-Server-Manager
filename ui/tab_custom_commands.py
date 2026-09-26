@@ -32,7 +32,7 @@ from tkinter import filedialog, messagebox, ttk
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermCheckbutton, TermText,
                       ScrollableFrame, themed_frame, panel_header,
-                      collapsible_section)
+                      collapsible_section, flow_children, auto_wrap)
 from core.custom_commands import (make_empty_rule, normalize_rule,
                                    validate_rule, ChatCommandDispatcher,
                                    AuditRecord)
@@ -114,9 +114,10 @@ class CustomCommandsTab:
                    variant="amber", font_spec=self._app.F_SMALL,
                    padx=8, pady=3).pack(side=tk.LEFT, padx=(0, 4))
         tk.Label(actions,
-                 text="(rules are per-profile; switch profile in Settings)",
+                 text="(rules are saved per profile)",
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=self._app.F_SMALL).pack(side=tk.LEFT, padx=(8, 0))
+        flow_children(actions)
 
         # IMPORTANT: Pack bottom-anchored items FIRST so they reserve
         # their space before the expanding paned window above them.
@@ -126,7 +127,7 @@ class CustomCommandsTab:
         # Help strip (very bottom)
         help_row = tk.Frame(outer, bg=Theme.BG_DARK)
         help_row.pack(side=tk.BOTTOM, fill=tk.X, padx=6, pady=(2, 4))
-        tk.Label(
+        auto_wrap(tk.Label(
             help_row,
             text=(
                 "Placeholders:  {player} {role} {target}={1}  {1}–{9}  {args}.   "
@@ -134,7 +135,7 @@ class CustomCommandsTab:
             ),
             fg=Theme.MUTED, bg=Theme.BG_DARK,
             font=self._app.F_SMALL, wraplength=900, justify=tk.LEFT,
-        ).pack(anchor=tk.W, padx=6)
+        )).pack(anchor=tk.W, fill=tk.X, padx=6)
 
         # Audit log strip (just above help)
         self._build_audit_panel(outer)
@@ -169,6 +170,7 @@ class CustomCommandsTab:
         TermButton(btn_row, "Delete", self._on_delete,
                    variant="stop", font_spec=self._app.F_SMALL,
                    padx=8, pady=3).pack(side=tk.LEFT)
+        flow_children(btn_row, spacing=4)
 
         list_wrap = tk.Frame(parent, bg=Theme.BORDER)
         list_wrap.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
@@ -230,7 +232,8 @@ class CustomCommandsTab:
                       "after the trigger are captured as {1}, {2}, …",
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=self._app.F_SMALL, wraplength=380, justify=tk.LEFT,
-                 ).pack(anchor=tk.W, padx=pad, pady=(1, 4))
+                 ).pack(anchor=tk.W, fill=tk.X, padx=pad, pady=(1, 4))
+        auto_wrap(body.winfo_children()[-1])
 
         # ── Roles ───────────────────────────────────────────────────────
         tk.Label(body, text="ALLOWED ROLES  (blank = any role):",
@@ -371,6 +374,7 @@ class CustomCommandsTab:
             anchor=tk.NW, padx=8, pady=4, wraplength=520,
         )
         self._preview_label.pack(fill=tk.X, padx=pad, pady=(2, 4))
+        auto_wrap(self._preview_label)
 
         self._set_editor_enabled(False)
 

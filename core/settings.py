@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 from .constants import LOG, script_dir, SETTINGS_SCHEMA_VERSION
 
@@ -301,3 +302,51 @@ def _write_pre_migration_backup(path: str, old_schema: Any) -> None:
         LOG.info("Wrote pre-migration backup: %s", os.path.basename(bak))
     except OSError as e:
         LOG.warning("Could not write pre-migration backup: %s", e)
+
+
+# -----------------------------------------------------------------------
+# Window layout (global, not per profile)
+# -----------------------------------------------------------------------
+_GEOMETRY_RE = re.compile(r"(\d{2,5})x(\d{2,5})\+(-?\d{1,6})\+(-?\d{1,6})")
+
+
+def normalize_window_layout(raw) -> dict:
+    """Validated copy of the saved window layout; anything malformed is
+    dropped so a bad settings file can never break startup.
+
+    Keys: geometry ("WxH+X+Y" of the un-maximized window), zoomed (bool),
+    main_sash / side_sash (split position as a fraction 0.1–0.9), tab
+    (label of the selected sidebar tab)."""
+    out: dict = {}
+    if not isinstance(raw, dict):
+        return out
+    geometry = raw.get("geometry")
+    if isinstance(geometry, str) and _GEOMETRY_RE.fullmatch(geometry):
+        out["geometry"] = geometry
+    if isinstance(raw.get("zoomed"), bool):
+        out["zoomed"] = raw["zoomed"]
+    for key in ("main_sash", "side_sash"):
+        value = raw.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                and 0.1 <= value <= 0.9:
+            out[key] = float(value)
+    tab = raw.get("tab")
+    if isinstance(tab, str) and 0 < len(tab) <= 40:
+        out["tab"] = tab
+    return out
+
+
+def fit_geometry(geometry: str, screen: tuple) -> Optional[str]:
+    """Clamp a saved "WxH+X+Y" onto `screen` = (x, y, width, height) —
+    the desktop spanning all monitors — so a window saved on a monitor
+    that's since been unplugged comes back fully visible. Returns None
+    for an unparseable string."""
+    m = _GEOMETRY_RE.fullmatch(geometry or "")
+    if not m:
+        return None
+    w, h, x, y = (int(v) for v in m.groups())
+    sx, sy, sw, sh = screen
+    w, h = min(w, sw), min(h, sh)
+    x = min(max(x, sx), sx + sw - w)
+    y = min(max(y, sy), sy + sh - h)
+    return f"{w}x{h}+{x}+{y}"

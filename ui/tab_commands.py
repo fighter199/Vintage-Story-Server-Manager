@@ -24,19 +24,21 @@ def build_commands_tab(parent, app):
     # Search row
     search_row = tk.Frame(pad, bg=Theme.BG_PANEL)
     search_row.pack(fill=tk.X, pady=(6, 4))
+    # Right-hand items are packed first so the search box is what
+    # shrinks in a narrow panel, not the Reload button.
+    TermButton(search_row, "↻ Reload", app._reload_commands_json,
+               variant="amber", font_spec=app.F_SMALL,
+               padx=8, pady=2).pack(side=tk.RIGHT)
+    app.cmd_count_var = tk.StringVar(value="")
+    tk.Label(search_row, textvariable=app.cmd_count_var,
+             fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
+             font=app.F_SMALL).pack(side=tk.RIGHT, padx=6)
     tk.Label(search_row, text="SEARCH:", fg=Theme.AMBER_DIM,
              bg=Theme.BG_PANEL, font=app.F_SMALL).pack(side=tk.LEFT)
     TermEntry(search_row, textvariable=app.cmd_search_var,
               font_spec=app.F_NORMAL).pack(side=tk.LEFT, fill=tk.X,
                                             expand=True, padx=6, ipady=2)
     app.cmd_search_var.trace_add('write', lambda *_: app._refresh_commands_tree())
-    app.cmd_count_var = tk.StringVar(value="")
-    tk.Label(search_row, textvariable=app.cmd_count_var,
-             fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
-             font=app.F_SMALL).pack(side=tk.LEFT, padx=6)
-    TermButton(search_row, "↻ Reload", app._reload_commands_json,
-               variant="amber", font_spec=app.F_SMALL,
-               padx=8, pady=2).pack(side=tk.LEFT)
     # IMPORTANT: We pack the bottom-anchored items FIRST (with
     # side=tk.BOTTOM) so they always reserve their space before the
     # expanding tree above them. Without this, narrow windows would

@@ -17,7 +17,7 @@ from core.utils import fmt_size
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                       Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section)
+                      panel_header, collapsible_section, flow_children)
 
 
 def build_backup_tab(parent, app):
@@ -41,6 +41,7 @@ def build_backup_tab(parent, app):
     TermButton(btn_row, "↻ Refresh", lambda: app._refresh_backup_list(),
                variant="amber", font_spec=app.F_SMALL, padx=10, pady=6
                ).pack(side=tk.LEFT, padx=(8, 0))
+    flow_children(btn_row)
 
     # Backup date-based retention
     ret_row = tk.Frame(pad, bg=Theme.BG_PANEL)
@@ -55,6 +56,7 @@ def build_backup_tab(parent, app):
                        activebackground=Theme.BG_PANEL,
                        selectcolor=Theme.BG_INPUT,
                        font=app.F_SMALL).pack(side=tk.LEFT, padx=6)
+    flow_children(ret_row)
 
     # Independent keep-last-N caps for the start/stop backup families.
     # (startbackup-*.zip / stopbackup-*.zip — the mode above only
@@ -75,6 +77,7 @@ def build_backup_tab(parent, app):
                            "saved with Settings)",
              fg=Theme.MUTED, bg=Theme.BG_PANEL,
              font=app.F_SMALL).pack(side=tk.LEFT)
+    flow_children(fam_row)
 
     status = tk.Label(pad, text="No backup in progress.",
                       fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,

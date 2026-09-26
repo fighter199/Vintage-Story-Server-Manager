@@ -34,7 +34,8 @@ from mods.inspector import LocalModInspector
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
                       Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section)
+                      panel_header, collapsible_section,
+                      flow_children)
 
 
 def _sorted_releases(releases: list) -> list:
@@ -174,6 +175,7 @@ def _build_mods_installed_subtab(app: 'ServerManagerApp', parent):
         app._update_check_force_refresh_var,
         font_spec=app.F_SMALL,
     ).pack(side=tk.LEFT, padx=(8, 2))
+    flow_children(btns, spacing=4)
 
     # Listbox fills the middle.
     # Search row — sits above the listbox. Live-filters the cached
@@ -356,7 +358,7 @@ def _build_mods_browse_left(app: 'ServerManagerApp', parent):
     app._moddb_tag_body_note = tk.Label(
         app.moddb_tag_scroll.body,
         text="Loading tags…",
-        fg=Theme.AMBER_FAINT, bg=Theme.BG_INPUT,
+        fg=Theme.MUTED, bg=Theme.BG_INPUT,
         font=app.F_SMALL, padx=6, pady=6)
     app._moddb_tag_body_note.pack(anchor=tk.W)
 
@@ -403,7 +405,7 @@ def _build_mods_browse_left(app: 'ServerManagerApp', parent):
     t.tag_configure("side_srv",  foreground=Theme.GREEN)
     t.tag_configure("side_both", foreground=Theme.CYAN)
     t.tag_configure("side_cli",  foreground=Theme.RED)
-    t.tag_configure("side_unk",  foreground=Theme.AMBER_FAINT)
+    t.tag_configure("side_unk",  foreground=Theme.MUTED)
     t.tag_configure("selected",
                     background=Theme.BG_SELECT,
                     foreground=Theme.AMBER_GLOW)
@@ -512,7 +514,7 @@ def _build_mods_browse_right(app: 'ServerManagerApp', parent):
     d.tag_configure("side_srv",  foreground=Theme.GREEN)
     d.tag_configure("side_both", foreground=Theme.CYAN)
     d.tag_configure("side_cli",  foreground=Theme.RED)
-    d.tag_configure("side_unk",  foreground=Theme.AMBER_FAINT)
+    d.tag_configure("side_unk",  foreground=Theme.MUTED)
 
     # ---- FILES pane ----------------------------------------------
     files_pane = tk.Frame(upper, bg=Theme.BG_PANEL)
