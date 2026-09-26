@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.1**
+Current version: **3.2**
 
 ## Feature highlights
 
@@ -71,9 +71,14 @@ python run_tests.py               # full test suite, no pytest needed
 ```
 
 First launch creates `vserverman_settings.json`, a `logs/` folder, and
-(per profile) `chat_log_<profile>.json` next to `VSSM.py`. A
-`Release/` folder containing only the runtime files (no tests or
-caches) can be produced for deployment.
+(per profile) `chat_log_<profile>.json` next to `VSSM.py`.
+
+To package a release (runtime files only — no test suite, test runner
+or caches):
+
+```bash
+python make_release.py            # → Release/VSSM-<version>/ and Release/VSSM-<version>.zip
+```
 
 ## Module layout
 
@@ -406,7 +411,26 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 `3` syntax error (rolled back). Always run them from the folder
 containing `VSSM.py`.
 
-## Recent changes (July 2026)
+## Recent changes
+
+### v3.2 (September 2026)
+
+- **WORLD MAP tab** — shaded-relief map of the savegame with chunk
+  selection and deletion; built for 100+ GB worlds (sampled overview,
+  full detail on zoom, rewrite mode that shrinks the file and keeps the
+  original as a backup). See *The WORLD MAP tab*.
+- **Readability** — larger default text (small text 7 pt → 9 pt), no
+  more double scaling on high-DPI screens, sharp text on scaled Windows
+  displays, live text size (SETTINGS → Text size, or Ctrl + / − / 0),
+  and secondary/hint text raised to WCAG AA contrast in every preset.
+- **Layout** — sidebar tabs wrap instead of being squeezed to "CO",
+  "SE", "BA"; button rows and help text wrap instead of being cut off.
+- **Remembered window layout** — size/position, maximized state,
+  console and sidebar splits, and the open tab persist between launches.
+- **Fixed:** MODS and BACKUP lists empty until refreshed; the header
+  re-opening on every launch.
+
+### July 2026
 
 - **Consistent live backups** — running-server backups now go through
   `/genbackup` instead of zipping the live database (see Backups).
