@@ -37,6 +37,11 @@ Current version: **3.1**
 - **Mod manager** — inspect installed mods, browse the ModDB in-app,
   and run a parallel, cached update check with a per-mod picker,
   game-version compatibility filter, and atomic downloads.
+- **World map & chunk pruning** — renders the savegame as a shaded
+  relief map; select areas and delete their chunks so the server
+  regenerates them fresh. Built for 100+ GB savegames: sampled
+  overview, full detail on zoom, and a rewrite mode that shrinks the
+  file while keeping the original as a backup.
 - **Scheduling** — cron-style restart schedule with advance broadcast
   warnings, plus periodic auto-backup.
 - **Profiles & themes** — every server-specific setting is
@@ -88,8 +93,12 @@ VSSM5/
 │   ├── custom_commands.py  ChatCommandDispatcher, validation, import/export
 │   ├── autorun.py          AutorunScheduler — injectable clock/send, testable
 │   ├── player_timers.py    PlayerTimers — session + lifetime playtime
-│   └── utils.py            port check, backup/restore zip helpers, DPI
+│   ├── utils.py            port check, backup/restore zip helpers, DPI
+│   └── world_db.py         .vcdbs reader: ChunkPos packing, height maps,
+│                           selection geometry, overview/detail loading,
+│                           in-place delete + rewrite-and-swap pruning
 ├── ui/                     one module per tab + theme.py + widgets.py
+│                           (world_map.py = WORLD MAP tab + map window)
 ├── backup/
 │   └── manager.py          BackupManager — async zip, /genbackup live path,
 │                           per-family retention, completion callbacks
@@ -265,6 +274,70 @@ failed, live progress, and a cancel that works mid-download. Downloads
 stream to `<dest>.part` and are swapped into place with `os.replace`,
 so a failed download never leaves a half-written mod.
 
+## The WORLD MAP tab
+
+Pick a savegame (the most recently written `.vcdbs` in the world
+folder is preselected, or *Browse…* to any copy) and press
+**🗺 Open Map**. The map window draws the generated terrain as shaded
+relief: land coloured by height, water by depth, ungenerated area left
+dark. It only reads the file, so it works while the server is running.
+
+**Big worlds.** Nothing scans a whole table, so opening the map takes
+about the same time for a 5 GB world as for a 300 GB one:
+
+- rows are located with indexed key lookups (a fraction of a second);
+- worlds up to ~150k chunk columns are read completely; bigger ones
+  open as a sampled overview (one column per 2×2, 4×4, 8×8 … block,
+  capped at ~150k reads), and counts are shown with "≈";
+- zoom in and the visible area (up to ~30k columns) is read at full
+  detail in the background — outlined in cyan.
+
+On a synthetic 5.8 GB / 407k-column world: overview 13 s (a full read
+takes 42 s), a full-detail tile 1–5 s, under 30 MB of RAM.
+
+| Input                    | Action                                   |
+|--------------------------|------------------------------------------|
+| Left-drag                | current tool: pan / select / deselect    |
+| Shift + left-drag        | deselect                                 |
+| Right- or middle-drag    | pan                                      |
+| Wheel, `+` / `-`         | zoom (around the cursor)                 |
+| All / Invert / Clear     | selection shortcuts                      |
+| Keep centre…             | select everything except a square around |
+|                          | the map centre (in-game 0, 0)            |
+
+The status bar shows in-game coordinates (relative to the map
+centre), chunk and region under the cursor, surface height, and the
+selection's size with an estimate of how much of the file it is.
+
+**🗑 Delete selected…** removes the selected chunk columns (their map
+chunk plus every chunk above it, dimension 0 only); the server
+regenerates them from the world seed when a player next goes there.
+Two ways to do it:
+
+- **Rewrite into a smaller savegame** — copies only what you keep into
+  a new file (inside SQLite, never reading the deleted data), then
+  swaps it in. The file actually shrinks, and the original is *moved*
+  into the server's `Backups` folder as an instant backup (untick to
+  delete it instead). Needs free space for the kept data. Cancelling
+  or any error leaves the original untouched. 5.8 GB → 1.9 GB took
+  28 s in testing.
+- **Delete in place** — quicker for removing a small part of a big
+  world. Works in batches of whole rows, so the journal stays small and
+  a cancel never leaves a column half-deleted. The file keeps its size
+  (the server reuses the space for new terrain). Optionally zips the
+  world folder into the backup folder first; nothing is deleted if that
+  backup fails.
+
+Either way: the server must be stopped (VSSM also refuses to start it
+until the job finishes), the map must be reloaded if the savegame
+changed since it was loaded, and map regions (512×512 climate/ore data)
+are only removed when no column inside them is left.
+
+Anything built, stored or tamed in a deleted area is lost; players who
+logged out there may log back in underground. Land claims are kept.
+The server's own `/db prune` command is a complementary tool — it
+removes chunks with few player edits automatically.
+
 ## Scheduling
 
 - **Periodic auto-backup** — every N minutes while running (labelled
@@ -314,7 +387,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, and utility helpers. UI code is intentionally not
-exercised. 365 tests at the time of writing.
+exercised. 428 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)

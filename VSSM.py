@@ -83,6 +83,7 @@ from core.chat_log import (ChatLogStore, parse_chat_with_group,
                             parse_ungrouped_chat, UNGROUPED_KEY)
 from core.player_timers import PlayerTimers, fmt_duration
 from ui.tab_autorun import AutorunTab
+from ui.world_map import WorldMapTab
 from core.autorun import AutorunScheduler
 from mods.inspector import LocalModInspector
 from mods.moddb import ModDbClient
@@ -304,6 +305,9 @@ class ServerManagerApp(tk.Tk):
 
         self._shutdown_in_progress = False
         self._shutdown_callbacks   = []
+        # Set by the world map window while it deletes chunks from the
+        # savegame; the server must not start until it's done.
+        self._world_edit_in_progress = False
         # Set when the user stops with "backup before stop" enabled;
         # consumed by _finalize_stop, which takes the snapshot after
         # the process has exited (world files quiescent).
@@ -1097,6 +1101,11 @@ class ServerManagerApp(tk.Tk):
         autorun_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
         self.notebook.add(autorun_frame, text="AUTORUN")
         self._autorun_tab = AutorunTab(autorun_frame, self)
+
+        # World map: savegame viewer + chunk pruning (opens a window).
+        world_map_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
+        self.notebook.add(world_map_frame, text="WORLD MAP")
+        self._world_map_tab = WorldMapTab(world_map_frame, self)
         # Route every dispatch (fired or skipped) into the tab's audit
         # log. Use after_idle so audit updates always happen on the Tk
         # main thread, even when dispatch is invoked from _process_queue.
@@ -1935,6 +1944,10 @@ class ServerManagerApp(tk.Tk):
             self._notify("Backup in progress — start once it finishes.",
                          level="warn")
             return
+        if self._world_edit_in_progress:
+            self._notify("World map is editing the savegame — start once "
+                         "it finishes.", level="warn")
+            return
         if self.backup_before_start_var.get():
             # Snapshot while the world is quiescent and only launch once
             # the zip is complete. (Previously the backup and the server
@@ -1953,6 +1966,10 @@ class ServerManagerApp(tk.Tk):
         """Spawn the server process. Split out of start_server so the
         pre-start backup can defer the launch until the zip is done."""
         if self.is_running or self._shutdown_in_progress:
+            return
+        if self._world_edit_in_progress:
+            self._notify("World map is editing the savegame — server not "
+                         "started.", level="warn")
             return
         exe = self.server_path_var.get().strip()
         if not exe or not os.path.isfile(exe):
@@ -3582,6 +3599,17 @@ class ServerManagerApp(tk.Tk):
             self._persist_player_totals()
         except Exception:
             pass
+        if self._world_edit_in_progress:
+            # Quitting mid-edit is safe: SQLite rolls back the open
+            # transaction on next open, and a rewrite only replaces
+            # the savegame once the new file is complete.
+            if not messagebox.askokcancel(
+                    "Quit",
+                    "The world map is still modifying the savegame. "
+                    "Quit anyway? Unfinished work is rolled back - no "
+                    "chunk column is ever left half-deleted.",
+                    icon="warning", parent=self):
+                return
         if self.is_running:
             if not messagebox.askokcancel(
                     "Quit",
