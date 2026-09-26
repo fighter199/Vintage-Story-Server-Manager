@@ -210,6 +210,29 @@ class TestWireFormat:
             blob = mapchunk_blob(rain, terrain, packed=packed)
             assert parse_mapchunk_heights(blob, idx) == want
 
+    def test_parse_mapchunk_real_layout(self):
+        # Layout seen in a real savegame: unpacked arrays for fields 3, 7,
+        # 12 and 13 with single fields in between.
+        rain = [109 + i % 11 for i in range(1024)]
+        terrain = [20000 + i for i in range(1024)]       # 3-byte varints
+        blob = (b"".join(f_varint(3, v) for v in rain) + f_varint(4, 1)
+                + b"".join(f_varint(7, v) for v in terrain) + f_varint(10, 2)
+                + f_bytes(11, b"moddata")
+                + b"".join(f_varint(12, 5) for _ in range(1024)))
+        idx = sample_indices(8)
+        assert parse_mapchunk_heights(blob, idx) == (
+            [rain[i] for i in idx], [terrain[i] for i in idx])
+
+    def test_parse_mapchunk_unpacked_skips_other_repeated_fields(self):
+        rain = list(range(1024))
+        blob = (b"".join(f_varint(2, 7) for _ in range(50))
+                + b"".join(f_varint(3, v) for v in rain))
+        assert parse_mapchunk_heights(blob, [0, 1023]) == ([0, 1023], None)
+
+    def test_parse_mapchunk_short_unpacked_array(self):
+        blob = b"".join(f_varint(3, v) for v in range(100))
+        assert parse_mapchunk_heights(blob, [5, 500]) == (None, None)
+
     def test_parse_mapchunk_missing_maps(self):
         assert parse_mapchunk_heights(f_varint(1, 1), [0]) == (None, None)
 

@@ -164,44 +164,62 @@ def iter_fields(buf) -> Iterator[tuple[int, int, object]]:
         yield field, wire, value
 
 
-_VARINT_TOKEN = re.compile(rb"[\x80-\xff]*[\x00-\x7f]")
-_SKIP_PATTERNS: dict[int, re.Pattern] = {}
+_VARINT = rb"[\x80-\xff]*[\x00-\x7f]"
+_PATTERNS: dict[tuple, re.Pattern] = {}
 
 
-def _skip_pattern(n: int) -> re.Pattern:
-    pat = _SKIP_PATTERNS.get(n)
+def _pattern(kind: str, tag: bytes, n: int = 0) -> re.Pattern:
+    """Cached regexes over varint streams. `tag` prefixes every element
+    (b"" for packed arrays, the field's tag bytes for unpacked ones):
+      "skip" — exactly n elements, "one" — one element (value in group 1),
+      "run"  — as many consecutive elements as there are."""
+    key = (kind, tag, n)
+    pat = _PATTERNS.get(key)
     if pat is None:
-        pat = re.compile(rb"(?:[\x80-\xff]*[\x00-\x7f]){%d}" % n)
-        _SKIP_PATTERNS[n] = pat
+        t = re.escape(tag)
+        if kind == "skip":
+            pat = re.compile(rb"(?:%s%s){%d}" % (t, _VARINT, n))
+        elif kind == "one":
+            pat = re.compile(rb"%s(%s)" % (t, _VARINT))
+        else:
+            pat = re.compile(rb"(?:%s%s)+" % (t, _VARINT))
+        _PATTERNS[key] = pat
     return pat
+
+
+def sample_varints(buf, start: int, end: int, indices: list[int],
+                   tag: bytes = b"") -> Optional[list[int]]:
+    """Decode the elements at `indices` (sorted, ascending) of a repeated
+    varint field occupying buf[start:end], without decoding the rest —
+    the regex engine skips the elements in between. `tag` is b"" for a
+    packed array, or the tag bytes repeated before each element of an
+    unpacked one (protobuf-net's default, which the game uses). Returns
+    None if the array is shorter than the last index."""
+    out = []
+    pos = start
+    prev = -1
+    one = _pattern("one", tag)
+    for idx in indices:
+        gap = idx - prev - 1
+        if gap:
+            m = _pattern("skip", tag, gap).match(buf, pos, end)
+            if m is None:
+                return None
+            pos = m.end()
+        m = one.match(buf, pos, end)
+        if m is None:
+            return None
+        tok = m.group(1)
+        out.append(tok[0] if len(tok) == 1 else read_varint(tok, 0)[0])
+        pos = m.end()
+        prev = idx
+    return out
 
 
 def sample_packed_varints(buf, start: int, end: int,
                           indices: list[int]) -> Optional[list[int]]:
-    """Decode the varints at `indices` (sorted, ascending) of a packed
-    repeated field occupying buf[start:end], without decoding the rest.
-    Returns None if the array is shorter than the last index."""
-    out = []
-    pos = start
-    prev = -1
-    for idx in indices:
-        gap = idx - prev - 1
-        if gap:
-            m = _skip_pattern(gap).match(buf, pos, end)
-            if m is None:
-                return None
-            pos = m.end()
-        m = _VARINT_TOKEN.match(buf, pos, end)
-        if m is None:
-            return None
-        tok = m.group()
-        if len(tok) == 1:
-            out.append(tok[0])
-        else:
-            out.append(read_varint(tok, 0)[0])
-        pos = m.end()
-        prev = idx
-    return out
+    """sample_varints for a packed (length-delimited) array."""
+    return sample_varints(buf, start, end, indices)
 
 
 def sample_offsets(samples: int) -> list[int]:
@@ -218,21 +236,42 @@ def sample_indices(samples: int) -> list[int]:
 
 def parse_mapchunk_heights(blob, indices: list[int]):
     """Return (rain_heights, terrain_heights) sampled at `indices`.
-    Either element is None when that height map is missing/short."""
+    Either element is None when that height map is missing/short.
+
+    Real map chunks store each height map unpacked (1024 tag+value
+    pairs), so a map chunk has 4000+ top-level fields. Every run of a
+    repeated varint field is jumped over with one regex match instead
+    of being walked field by field, and the walk stops once both maps
+    are found."""
     wanted = (MAPCHUNK_RAIN_HEIGHT_FIELD, MAPCHUNK_TERRAIN_HEIGHT_FIELD)
     found: dict[int, Optional[list[int]]] = {}
-    loose: dict[int, list[int]] = {}
-    for field, wire, value in iter_fields(blob):
-        if field not in wanted:
-            continue
-        if wire == 2:
-            found[field] = sample_packed_varints(blob, value[0], value[1], indices)
-        elif wire == 0:
-            # Unpacked encoding: one tag per element.
-            loose.setdefault(field, []).append(value)
-    for field, values in loose.items():
-        if field not in found and len(values) > indices[-1]:
-            found[field] = [values[i] for i in indices]
+    pos = 0
+    n = len(blob)
+    while pos < n and len(found) < len(wanted):
+        start = pos
+        key, pos = read_varint(blob, pos)
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            tag = bytes(blob[start:pos])
+            m = _pattern("run", tag).match(blob, start)
+            if m is None:
+                raise ValueError("truncated varint field")
+            if field in wanted and field not in found:
+                found[field] = sample_varints(blob, start, m.end(), indices, tag)
+            pos = m.end()
+        elif wire == 2:
+            length, pos = read_varint(blob, pos)
+            if field in wanted and field not in found:
+                found[field] = sample_varints(blob, pos, pos + length, indices)
+            pos += length
+        elif wire == 1:
+            pos += 8
+        elif wire == 5:
+            pos += 4
+        else:
+            raise ValueError(f"unsupported wire type {wire}")
+        if pos > n:
+            raise ValueError("truncated field")
     return (found.get(MAPCHUNK_RAIN_HEIGHT_FIELD),
             found.get(MAPCHUNK_TERRAIN_HEIGHT_FIELD))
 

@@ -387,7 +387,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, and utility helpers. UI code is intentionally not
-exercised. 428 tests at the time of writing.
+exercised. 431 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
