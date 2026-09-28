@@ -111,8 +111,10 @@ _CLI_LOG_LEVEL: Optional[str] = None
 FALLBACK_COMMANDS = {
     "Server": {
         "/stop":   {"description": "Stop the server.", "template": "/stop", "args": []},
-        "/save":   {"description": "Save the world.",  "template": "/save",  "args": []},
-        "/players":{"description": "List connected players.", "template": "/players", "args": []},
+        "/autosavenow": {"description": "Save the world now.",
+                         "template": "/autosavenow", "args": []},
+        "/list clients": {"description": "List connected players.",
+                          "template": "/list clients", "args": []},
     }
 }
 

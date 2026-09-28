@@ -123,11 +123,6 @@
         {"name": "y", "type": "int", "optional": true, "hint": "blank = surface"},
         {"name": "z", "type": "int"}
       ]
-    },
-    "/serverconfig setspawnhere": {
-      "template": "/serverconfig setspawnhere",
-      "description": "Set the default spawn point to the caller's current position.",
-      "args": []
     }
   },
 
@@ -158,16 +153,6 @@
       "description": "Unban a player.",
       "args": [ {"name": "player", "type": "text", "hint": "Name of banned player"} ]
     },
-    "/clearinv": {
-      "template": "/clearinv",
-      "description": "Clear your own inventory.",
-      "args": []
-    },
-    "/kill": {
-      "template": "/kill",
-      "description": "Kill yourself (suicide).",
-      "args": []
-    },
     "/pm": {
       "template": "/pm {player} {message}",
       "description": "Send a private message.",
@@ -187,14 +172,6 @@
       "args": []
     },
 
-    "/gamemode (self)": {
-      "template": "/gamemode {mode}",
-      "description": "Change your own game mode.",
-      "args": [
-        {"name": "mode", "type": "choice",
-         "choices": ["survival", "creative", "guest", "spectator", "0", "1", "2", "3"]}
-      ]
-    },
     "/gamemode (other player)": {
       "template": "/gamemode {player} {mode}",
       "description": "Change another player's game mode.",
@@ -205,38 +182,6 @@
       ]
     },
 
-    "/tp (to coords)": {
-      "template": "/tp {x} {y} {z}",
-      "description": "Teleport yourself to pretty coordinates.",
-      "args": [
-        {"name": "x", "type": "int"},
-        {"name": "y", "type": "int"},
-        {"name": "z", "type": "int"}
-      ]
-    },
-    "/tp (to absolute coords)": {
-      "template": "/tp ={x} ={y} ={z}",
-      "description": "Teleport to absolute coordinates (debug screen CTRL+F3).",
-      "args": [
-        {"name": "x", "type": "int"},
-        {"name": "y", "type": "int"},
-        {"name": "z", "type": "int"}
-      ]
-    },
-    "/tp (relative offset)": {
-      "template": "/tp ~{dx} ~{dy} ~{dz}",
-      "description": "Teleport by a relative offset from current position.",
-      "args": [
-        {"name": "dx", "type": "int"},
-        {"name": "dy", "type": "int"},
-        {"name": "dz", "type": "int"}
-      ]
-    },
-    "/tp (to player)": {
-      "template": "/tp {player}",
-      "description": "Teleport yourself to a player.",
-      "args": [ {"name": "player", "type": "player"} ]
-    },
     "/tp (player to coords)": {
       "template": "/tp {player} {x} {y} {z}",
       "description": "Teleport a player to coordinates.",
@@ -246,11 +191,6 @@
         {"name": "y", "type": "int"},
         {"name": "z", "type": "int"}
       ]
-    },
-    "/tpwp": {
-      "template": "/tpwp {waypoint}",
-      "description": "Teleport to a waypoint (prefix match on name).",
-      "args": [ {"name": "waypoint", "type": "text"} ]
     },
 
     "/giveblock": {
@@ -524,98 +464,6 @@
     }
   },
 
-  "Waypoints": {
-    "/waypoint list": {
-      "template": "/waypoint list",
-      "description": "List all your waypoints.",
-      "args": []
-    },
-    "/waypoint add": {
-      "template": "/waypoint add {color} {title}",
-      "description": "Add a waypoint at your current position.",
-      "args": [
-        {"name": "color", "type": "choice",
-         "choices": ["red","orange","yellow","green","cyan","blue","purple",
-                     "pink","white","gray","black","gold","brown"]},
-        {"name": "title", "type": "text"}
-      ]
-    },
-    "/waypoint remove": {
-      "template": "/waypoint remove {id}",
-      "description": "Remove a waypoint by its ID (see /waypoint list).",
-      "args": [ {"name": "id", "type": "int"} ]
-    }
-  },
-
-  "Land Claiming": {
-    "/land list": {
-      "template": "/land list",
-      "description": "List all your claims.",
-      "args": []
-    },
-    "/land info": {
-      "template": "/land info",
-      "description": "Claim info at current position.",
-      "args": []
-    },
-    "/land free": {
-      "template": "/land free {index}",
-      "description": "Delete one of your claims by index.",
-      "args": [ {"name": "index", "type": "int"} ]
-    },
-    "/land adminfree": {
-      "template": "/land adminfree",
-      "description": "Admin: delete any player's claim at current position.",
-      "args": []
-    },
-    "/land claim new": {
-      "template": "/land claim new",
-      "description": "Start a new claim.",
-      "args": []
-    },
-    "/land claim save": {
-      "template": "/land claim save {description}",
-      "description": "Save the current claim.",
-      "args": [ {"name": "description", "type": "text", "optional": true} ]
-    },
-    "/land claim cancel": {
-      "template": "/land claim cancel",
-      "description": "Discard claim modifications.",
-      "args": []
-    },
-    "/land claim grant": {
-      "template": "/land claim grant {player} {access}",
-      "description": "Grant another player access to your claim.",
-      "args": [
-        {"name": "player", "type": "player"},
-        {"name": "access", "type": "choice", "choices": ["use", "all"]}
-      ]
-    },
-    "/land claim revoke": {
-      "template": "/land claim revoke {player}",
-      "description": "Revoke a player's access to your claim.",
-      "args": [ {"name": "player", "type": "player"} ]
-    },
-    "/land claim grow": {
-      "template": "/land claim grow {direction} {amount}",
-      "description": "Grow claim in a direction.",
-      "args": [
-        {"name": "direction", "type": "choice",
-         "choices": ["north","east","south","west","up","down"]},
-        {"name": "amount", "type": "int", "hint": "-99 … 99"}
-      ]
-    },
-    "/land claim shrink": {
-      "template": "/land claim shrink {direction} {amount}",
-      "description": "Shrink claim in a direction.",
-      "args": [
-        {"name": "direction", "type": "choice",
-         "choices": ["north","east","south","west","up","down"]},
-        {"name": "amount", "type": "int"}
-      ]
-    }
-  },
-
   "Utility & Debug": {
     "/genbackup": {
       "template": "/genbackup {filename}",
@@ -693,16 +541,6 @@
     "/debug rift clear": {
       "template": "/debug rift clear",
       "description": "Immediately remove all loaded rifts.",
-      "args": []
-    },
-    "/debug rift spawn": {
-      "template": "/debug rift spawn {quantity}",
-      "description": "Spawn N rifts near the caller.",
-      "args": [ {"name": "quantity", "type": "int"} ]
-    },
-    "/whenwillitstopraining": {
-      "template": "/whenwillitstopraining",
-      "description": "Tells you when the rain should stop.",
       "args": []
     }
   }
