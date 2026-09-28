@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.4**
+Current version: **3.5**
 
 ## Feature highlights
 
@@ -510,6 +510,17 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.5 (September 2026)
+
+- **Teleports between players** — right-click a player in the player
+  list for *Teleport <player> to* another online player or *Teleport to
+  <player>* to bring someone to them. The old "Teleport to…", which
+  sent a console `/tp <name>` that couldn't go anywhere, is gone.
+- **GitHub and update check in the header** — *⌂ GitHub* opens the
+  project page; *⟳ Check for updates* compares with the latest release
+  and offers its download page. *Check for updates on startup* is off
+  by default.
 
 ### v3.4 (September 2026)
 
