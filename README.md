@@ -80,6 +80,10 @@ First launch creates `vserverman_settings.json`, a `logs/` folder, and
 - **Development branch** — the full source, including `tests/`,
   `run_tests.py` and `make_release.py`. New work lands here first.
 
+GitHub Actions runs the test suite on every push to the development
+branch, and publishes a GitHub Release (zip + changelog notes)
+automatically whenever `Main` receives a new version.
+
 To package a release from the development branch:
 
 ```bash

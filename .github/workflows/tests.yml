@@ -1,0 +1,23 @@
+# Runs the test suite on the development branch (Main holds release
+# builds only, without tests).
+name: Tests
+
+on:
+  push:
+    branches-ignore: [Main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests
+        run: python run_tests.py --no-lint

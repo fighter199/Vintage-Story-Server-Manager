@@ -30,7 +30,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Everything the app imports or reads, plus user-facing docs/tools.
 INCLUDE_FILES = ["VSSM.py", "vs_commands_builtin.json", "requirements.txt",
-                 "README.md", "probe_stdin.py", ".gitignore"]
+                 "README.md", "probe_stdin.py"]
+# Only meaningful on the release branch (published with --publish, left
+# out of the zip): the ignore list and the workflow that turns each new
+# version on Main into a GitHub Release.
+GIT_ONLY_FILES = [".gitignore", ".github/workflows/release.yml"]
 INCLUDE_PACKAGES = ["core", "ui", "backup", "mods"]
 
 
@@ -61,18 +65,20 @@ def build(out_dir: str | None = None) -> tuple[str, str]:
     if os.path.exists(dest):
         shutil.rmtree(dest)
     os.makedirs(dest)
-    for fn in INCLUDE_FILES:
+    for fn in INCLUDE_FILES + GIT_ONLY_FILES:
+        os.makedirs(os.path.dirname(os.path.join(dest, fn)), exist_ok=True)
         shutil.copy2(os.path.join(HERE, fn), os.path.join(dest, fn))
     for pkg in INCLUDE_PACKAGES:
         _copy_package(pkg, dest)
 
     zip_path = os.path.join(out_dir, name + ".zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        skip = {os.path.normpath(f) for f in GIT_ONLY_FILES}
         for dirpath, _dirs, filenames in os.walk(dest):
             for fn in sorted(filenames):
-                if fn == ".gitignore":
-                    continue                 # only meaningful in git
                 full = os.path.join(dirpath, fn)
+                if os.path.normpath(os.path.relpath(full, dest)) in skip:
+                    continue
                 zf.write(full, os.path.relpath(full, out_dir))
     return dest, zip_path
 

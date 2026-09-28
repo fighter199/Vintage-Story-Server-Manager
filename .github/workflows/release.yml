@@ -1,0 +1,67 @@
+# Publishes a GitHub Release whenever Main (the release branch) gets a
+# new version. Main is written by `make_release.py --publish Main`; the
+# version comes from core/constants.py and the notes from the README's
+# "### v<version>" changelog section. Re-publishing a version that
+# already has a release does nothing.
+name: Release
+
+on:
+  push:
+    branches: [Main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          v=$(python -c "import re;print(re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"', open('core/constants.py').read()).group(1))")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already released
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build zip and notes
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          python - <<'PY'
+          import re, subprocess, zipfile
+          version = "${{ steps.version.outputs.version }}"
+          root = f"VSSM-{version}"
+          files = subprocess.run(["git", "ls-files"], capture_output=True,
+                                 text=True, check=True).stdout.split("\n")
+          with zipfile.ZipFile(f"{root}.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+              for f in sorted(f for f in files if f):
+                  if f.startswith(".github/") or f == ".gitignore":
+                      continue
+                  zf.write(f, f"{root}/{f}")
+          readme = open("README.md", encoding="utf-8").read()
+          m = re.search(rf"^### v{re.escape(version)}\b.*?\n(.*?)(?=^### |\Z)",
+                        readme, re.S | re.M)
+          notes = m.group(1).strip() if m else f"VSSM {version}"
+          open("notes.md", "w", encoding="utf-8").write(notes + "\n")
+          PY
+
+      - name: Publish release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          gh release create "v$v" "VSSM-$v.zip" --target "${{ github.sha }}" \
+            --title "VSSM $v" --notes-file notes.md
