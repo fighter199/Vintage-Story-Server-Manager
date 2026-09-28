@@ -1,9 +1,7 @@
 """Tests for mods.moddb_cache."""
 import json
 import os
-import tempfile
 
-import pytest
 
 from mods.moddb_cache import ModDbCache, DEFAULT_TTL_SECS, WIRE_VERSION
 

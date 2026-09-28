@@ -1,5 +1,5 @@
 """Tests for core.parsers."""
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 

@@ -7,14 +7,11 @@ where `app` is the ServerManagerApp instance (formerly `self`).
 """
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from tkinter import ttk
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
-                      Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section)
+from .widgets import (TermButton, TermEntry, ScrollableFrame, panel_header)
 
 
 def build_commands_tab(parent, app):

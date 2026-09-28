@@ -158,7 +158,7 @@ class TestProfiles:
     def test_get_active_profile_creates_if_missing(self, tmp_script_dir):
         _, cs = tmp_script_dir
         s = {"active_profile": "creative", "profiles": {}}
-        p = cs.get_active_profile(s)
+        cs.get_active_profile(s)
         # Creates the profile on access.
         assert "creative" in s["profiles"]
 

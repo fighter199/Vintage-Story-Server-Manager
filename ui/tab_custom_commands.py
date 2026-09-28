@@ -22,16 +22,13 @@ Features:
 from __future__ import annotations
 
 import copy
-import json
 import os
-import time
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermCheckbutton, TermText,
-                      ScrollableFrame, themed_frame, panel_header,
+from .widgets import (TermButton, TermEntry, TermCheckbutton, ScrollableFrame, panel_header,
                       collapsible_section, flow_children, auto_wrap)
 from core.custom_commands import (make_empty_rule, normalize_rule,
                                    validate_rule, ChatCommandDispatcher,
@@ -589,7 +586,6 @@ class CustomCommandsTab:
                 lines.append(f"  → {c}")
         else:
             # Explain why
-            args_str = ""
             from core.custom_commands import _extract_args
             extracted = _extract_args(sample_msg, rule.get("trigger") or "")
             if extracted is None:

@@ -17,7 +17,7 @@ import os
 import re
 import shutil
 from datetime import datetime
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 from .constants import LOG, script_dir, SETTINGS_SCHEMA_VERSION
 

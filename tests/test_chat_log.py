@@ -1,8 +1,6 @@
 """Tests for core.chat_log."""
-import pytest
 
 from core.chat_log import (
-    ChatEntry,
     ChatLogStore,
     parse_chat_with_group,
 )

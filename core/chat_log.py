@@ -25,10 +25,9 @@ keeps the store unit-testable without any filesystem touching.
 """
 from __future__ import annotations
 
-import json
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 # Per-group ring-buffer cap. 500 lines × maybe 100 chars × ~20 groups

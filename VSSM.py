@@ -44,18 +44,14 @@ import argparse
 import logging
 import os
 import queue
-import re
-import shutil
-import socket
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
-import zipfile
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
 
@@ -63,26 +59,23 @@ from typing import Callable, Optional
 from core.constants import (APP_NAME, APP_VERSION, LOG, SERVER_LOG,
                               OPERATOR_ROLES, script_dir)
 from core.parsers import (classify_line, parse_player_event, split_client_list,
-                           parse_role_response, parse_json5_ish,
-                           parse_cron_expr, seconds_until_next,
+                           parse_role_response, parse_cron_expr, seconds_until_next,
                            parse_chat_message, strip_log_prefix)
 from core.settings import (load_settings, save_settings, get_active_profile,
-                            load_custom_commands, save_custom_commands,
-                            chat_log_path, load_player_totals,
+                            load_custom_commands, chat_log_path, load_player_totals,
                             normalize_window_layout, fit_geometry)
 from core.custom_commands import ChatCommandDispatcher
 from core.command_files import load_commands, ensure_user_file, USER_FILE
 from core.processes import find_external_servers, describe as describe_servers
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
                         open_in_editor,
-                         clean_mod_filename, fmt_size, backup_world_to_zip,
-                         restore_backup_zip, enable_windows_dpi_awareness)
+                         fmt_size, enable_windows_dpi_awareness)
 from ui.theme import (Theme, pick_mono_font, font_sizes,
                       TEXT_SCALE_MIN, TEXT_SCALE_MAX)
-from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton, TabStrip,
+from ui.widgets import (TermButton, TermEntry, TabStrip,
                         flow_row, reflow_all,
                          Sparkline, ScrollableFrame, themed_frame,
-                         panel_header, collapsible_section, ToastQueue)
+                         panel_header, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
 from ui.tab_chat_log import ChatLogTab
 from core.chat_log import (ChatLogStore, parse_chat_with_group,
@@ -91,7 +84,6 @@ from core.player_timers import PlayerTimers, fmt_duration
 from ui.tab_autorun import AutorunTab
 from ui.world_map import WorldMapTab
 from core.autorun import AutorunScheduler
-from mods.inspector import LocalModInspector
 from mods.moddb import ModDbClient
 from backup import BackupManager
 
@@ -234,7 +226,7 @@ class ServerManagerApp(tk.Tk):
 
         # ---- Load settings early (needed for theme + scale) ----------
         self._settings = load_settings()
-        profile = get_active_profile(self._settings)
+        get_active_profile(self._settings)   # creates the profile if missing
 
         # Apply the persisted log level (--log-level CLI flag wins).
         if not _CLI_LOG_LEVEL:
@@ -1198,7 +1190,8 @@ class ServerManagerApp(tk.Tk):
 
         def _copy_name(_e=None, n=name):
             try:
-                self.clipboard_clear(); self.clipboard_append(n)
+                self.clipboard_clear()
+                self.clipboard_append(n)
                 self._notify(f"Copied '{n}'.", level="info", duration_ms=1500)
             except Exception:
                 pass
@@ -1348,7 +1341,8 @@ class ServerManagerApp(tk.Tk):
 
     def _copy_to_clipboard(self, text):
         try:
-            self.clipboard_clear(); self.clipboard_append(text)
+            self.clipboard_clear()
+            self.clipboard_append(text)
             self._notify(f"Copied '{text}'.", level="info", duration_ms=1500)
         except Exception:
             pass
@@ -3738,7 +3732,6 @@ class ServerManagerApp(tk.Tk):
     # Chat log persistence helpers
     # ------------------------------------------------------------------
     def _chat_log_path_for_active_profile(self) -> str:
-        from core.settings import chat_log_path
         return chat_log_path(self._settings.get("active_profile"))
 
     def _chat_log_load(self) -> dict:

@@ -1,14 +1,10 @@
 """Tests for core.custom_commands — engine, validation, and helpers."""
-import pytest
 
 from core.custom_commands import (
-    AuditRecord,
     ChatCommandDispatcher,
-    DESTRUCTIVE_KEYWORDS,
     _contains_destructive,
     _expand_response,
     _extract_args,
-    _matches_trigger,
     make_empty_rule,
     normalize_rule,
     validate_rule,
@@ -153,7 +149,9 @@ class TestChatCommandDispatcher:
 class TestCooldown:
     def _setup(self):
         clock_value = [1000.0]
-        clock = lambda: clock_value[0]
+
+        def clock():
+            return clock_value[0]
         rules = [{"trigger": "!warp", "response": "/tp {player}",
                   "roles": [], "enabled": True, "cooldown_secs": 30}]
         d = ChatCommandDispatcher(lambda: rules, clock=clock)

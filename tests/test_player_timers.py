@@ -1,5 +1,4 @@
 """Tests for core.player_timers."""
-import pytest
 
 from core.player_timers import PlayerTimers, fmt_duration
 
@@ -99,11 +98,10 @@ class TestTotalAccumulation:
         totals: dict = {}
         pt = PlayerTimers(lambda: totals, clock=clock)
         # Session 1: 100s
-        pt.record_join("alice"); clock.advance(100); pt.record_leave("alice")
-        # Session 2: 200s
-        pt.record_join("alice"); clock.advance(200); pt.record_leave("alice")
-        # Session 3: 50s
-        pt.record_join("alice"); clock.advance(50);  pt.record_leave("alice")
+        for secs in (100, 200, 50):          # three sessions
+            pt.record_join("alice")
+            clock.advance(secs)
+            pt.record_leave("alice")
         assert totals.get("alice") == 350
 
     def test_total_for_unknown_player(self):
@@ -116,8 +114,10 @@ class TestTotalAccumulation:
         clock = FakeClock(1000)
         totals: dict = {}
         pt = PlayerTimers(lambda: totals, clock=clock)
-        pt.record_join("alice"); clock.advance(60)
-        pt.record_join("bob");   clock.advance(30)
+        pt.record_join("alice")
+        clock.advance(60)
+        pt.record_join("bob")
+        clock.advance(30)
         assert pt.session_secs("alice") == 90
         assert pt.session_secs("bob") == 30
 
@@ -188,8 +188,10 @@ class TestFlush:
         clock = FakeClock(1000)
         totals: dict = {}
         pt = PlayerTimers(lambda: totals, clock=clock)
-        pt.record_join("alice"); clock.advance(60)
-        pt.record_join("bob");   clock.advance(30)
+        pt.record_join("alice")
+        clock.advance(60)
+        pt.record_join("bob")
+        clock.advance(30)
         pt.reset_all()
         assert totals.get("alice") == 90
         assert totals.get("bob") == 30

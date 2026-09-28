@@ -23,16 +23,14 @@ ServerManagerApp; this tab only edits the rule list.
 """
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from datetime import datetime
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermCheckbutton, TermText,
-                      ScrollableFrame, panel_header, flow_children,
+from .widgets import (TermButton, TermEntry, TermCheckbutton, ScrollableFrame, panel_header, flow_children,
                       auto_wrap)
-from core.autorun import (AutorunAudit, expand_commands, make_empty_rule,
+from core.autorun import (AutorunAudit, make_empty_rule,
                           normalize_rule, validate_rule)
 
 
@@ -374,9 +372,11 @@ class AutorunTab:
             n, unit = _split_interval(secs)
             icon = "✓" if enabled else "○"
             badges = []
-            if rule.get("run_on_start"):     badges.append("@start")
-            if rule.get("run_on_save"):      badges.append("@save")
-            if rule.get("pause_when_empty"): badges.append("paused-if-empty")
+            for key, badge in (("run_on_start", "@start"),
+                               ("run_on_save", "@save"),
+                               ("pause_when_empty", "paused-if-empty")):
+                if rule.get(key):
+                    badges.append(badge)
             badge_str = ("  " + " ".join(badges)) if badges else ""
             self._listbox.insert(
                 tk.END,

@@ -16,7 +16,6 @@ import urllib.parse
 import urllib.request
 
 from core.constants import APP_NAME, APP_VERSION
-from core.utils import clean_mod_filename
 from mods.moddb_cache import ModDbCache
 
 
@@ -278,7 +277,6 @@ class ModDbClient:
 
     @staticmethod
     def _safe_remove(path):
-        import os
         try:
             if os.path.exists(path):
                 os.remove(path)

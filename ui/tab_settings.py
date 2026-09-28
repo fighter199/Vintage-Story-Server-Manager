@@ -7,14 +7,11 @@ where `app` is the ServerManagerApp instance (formerly `self`).
 """
 from __future__ import annotations
 
-import os
 import tkinter as tk
-from tkinter import ttk
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
-                      Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section, flow_children,
+from .widgets import (TermButton, TermEntry, TermCheckbutton,
+                      ScrollableFrame, flow_children,
                       auto_wrap)
 
 

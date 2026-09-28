@@ -7,15 +7,12 @@ where `app` is the ServerManagerApp instance (formerly `self`).
 """
 from __future__ import annotations
 
-import os
 import re
 import tkinter as tk
-from tkinter import colorchooser, ttk
+from tkinter import colorchooser
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
-                      Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section, auto_wrap)
+from .widgets import (TermButton, TermEntry, ScrollableFrame, panel_header, auto_wrap)
 
 
 _HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")

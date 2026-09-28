@@ -256,10 +256,10 @@ class ScrollableFrame(tk.Frame):
 
     def _on_scroll_set(self, first, last):
         try:
-            f, l = float(first), float(last)
+            top, bottom = float(first), float(last)
         except ValueError:
             return
-        needs_bar = (f > 0.0) or (l < 1.0)
+        needs_bar = (top > 0.0) or (bottom < 1.0)
         if needs_bar and not self._sb_packed:
             self._sb.pack(side=tk.RIGHT, fill=tk.Y)
             self._sb_packed = True
@@ -575,8 +575,10 @@ def collapsible_section(parent, title, font_spec=None,
                 body.pack(side=tk.BOTTOM, fill=tk.X, before=hdr)
                 title_label.configure(text=f"▾ {state['title']}")
             if on_toggle:
-                try: on_toggle(state["collapsed"])
-                except Exception: pass
+                try:
+                    on_toggle(state["collapsed"])
+                except Exception:
+                    pass
     else:
         hdr.pack(side=side, fill=tk.X, anchor=anchor, pady=pady)
         body.pack(side=side, fill=tk.X, after=hdr)
@@ -592,8 +594,10 @@ def collapsible_section(parent, title, font_spec=None,
                 body.pack(side=side, fill=tk.X, after=hdr)
                 title_label.configure(text=f"▾ {state['title']}")
             if on_toggle:
-                try: on_toggle(state["collapsed"])
-                except Exception: pass
+                try:
+                    on_toggle(state["collapsed"])
+                except Exception:
+                    pass
 
     for w in (hdr, title_label):
         w.bind("<Button-1>", toggle)
