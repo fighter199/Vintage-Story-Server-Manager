@@ -263,3 +263,51 @@ class TestCleanModFilename:
         # When declared name is .zip, we should prefer that.
         # (The exact policy may vary — this test pins current behaviour.)
         assert out.lower().endswith((".zip", ".cs"))
+
+
+class TestBackupProgressAndCancel:
+    def _world(self, tmp_path):
+        world = tmp_path / "Saves"
+        world.mkdir()
+        (world / "big.vcdbs").write_bytes(os.urandom(9 * 1024 * 1024))
+        (world / "small.txt").write_text("hello")
+        return world
+
+    def test_progress_is_in_bytes_and_reaches_total(self, tmp_path):
+        world = self._world(tmp_path)
+        seen = []
+        dst = str(tmp_path / "out.zip")
+        backup_world_to_zip(str(world), dst,
+                            progress_cb=lambda d, t: seen.append((d, t)))
+        total = 9 * 1024 * 1024 + 5
+        assert seen[-1] == (total, total)
+        assert len(seen) >= 3                       # several chunks of big file
+        assert [d for d, _ in seen] == sorted(d for d, _ in seen)
+        with zipfile.ZipFile(dst) as zf:
+            assert zf.read("Saves/small.txt") == b"hello"
+            info = zf.getinfo("Saves/big.vcdbs")
+            assert info.compress_type == zipfile.ZIP_DEFLATED
+            assert info.file_size == 9 * 1024 * 1024
+
+    def test_cancel_mid_file(self, tmp_path):
+        world = self._world(tmp_path)
+        calls = []
+
+        def cancel():
+            calls.append(1)
+            return len(calls) > 2                   # inside the big file
+
+        dst = str(tmp_path / "out.zip")
+        with pytest.raises(RuntimeError, match="cancelled"):
+            backup_world_to_zip(str(world), dst, cancel_flag=cancel)
+        assert not os.path.exists(dst)
+        assert not os.path.exists(dst + ".part")
+
+    def test_single_file_round_trip(self, tmp_path):
+        src = tmp_path / "live.vcdbs"
+        data = os.urandom(5 * 1024 * 1024)
+        src.write_bytes(data)
+        dst = str(tmp_path / "one.zip")
+        backup_single_file_to_zip(str(src), dst, arcname="W/live.vcdbs")
+        with zipfile.ZipFile(dst) as zf:
+            assert zf.read("W/live.vcdbs") == data

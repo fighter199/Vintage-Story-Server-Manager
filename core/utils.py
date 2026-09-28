@@ -167,31 +167,74 @@ def fmt_size(n) -> str:
 # -----------------------------------------------------------------------
 # Backup: zip + verify + restore
 # -----------------------------------------------------------------------
+# Level 1: on a real savegame, ~3x faster than level 6 for files only ~3%
+# larger (70 vs 23 MB/s) — what matters when a world is tens of GB.
+BACKUP_COMPRESSLEVEL = 1
+_COPY_CHUNK = 4 * 1024 * 1024
+
+
+def _zip_file(zf: zipfile.ZipFile, full: str, arcname: str,
+              on_bytes=None, cancel_flag=None) -> None:
+    """zf.write() in chunks, reporting bytes as they go and honouring
+    cancel mid-file (a world is often one multi-GB .vcdbs)."""
+    zinfo = zipfile.ZipInfo.from_file(full, arcname)
+    if zinfo.is_dir():
+        zf.writestr(zinfo, b"")
+        return
+    zinfo.compress_type = zipfile.ZIP_DEFLATED
+    zinfo._compresslevel = BACKUP_COMPRESSLEVEL
+    with open(full, "rb") as src, zf.open(zinfo, "w") as dst:
+        while True:
+            if cancel_flag and cancel_flag():
+                raise RuntimeError("Backup cancelled.")
+            chunk = src.read(_COPY_CHUNK)
+            if not chunk:
+                break
+            dst.write(chunk)
+            if on_bytes:
+                on_bytes(len(chunk))
+
+
 def backup_world_to_zip(src: str, dst: str, progress_cb=None, cancel_flag=None) -> str:
+    """Zip the world folder `src` to `dst` (atomically, via dst.part).
+    progress_cb(done_bytes, total_bytes) is called as data is written."""
     if not os.path.isdir(src):
         raise RuntimeError(f"Source folder does not exist: {src}")
     all_files = []
+    total = 0
     for root, _, files in os.walk(src):
         for f in files:
-            all_files.append(os.path.join(root, f))
-    total = len(all_files) or 1
+            full = os.path.join(root, f)
+            all_files.append(full)
+            try:
+                total += os.path.getsize(full)
+            except OSError:
+                pass
+    total = total or 1
+    done = 0
+
+    def on_bytes(n):
+        nonlocal done
+        done += n
+        if progress_cb:
+            try:
+                progress_cb(done, total)
+            except Exception:
+                pass
+
     part = dst + ".part"
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED,
-                             compresslevel=6, allowZip64=True) as zf:
-            for i, full in enumerate(all_files, 1):
+                             compresslevel=BACKUP_COMPRESSLEVEL,
+                             allowZip64=True) as zf:
+            for full in all_files:
                 if cancel_flag and cancel_flag():
                     raise RuntimeError("Backup cancelled.")
                 try:
                     arc = os.path.relpath(full, start=os.path.dirname(src))
-                    zf.write(full, arcname=arc)
+                    _zip_file(zf, full, arc, on_bytes, cancel_flag)
                 except (OSError, PermissionError) as e:
                     LOG.warning("Backup skip %s: %s", full, e)
-                if progress_cb:
-                    try:
-                        progress_cb(i, total)
-                    except Exception:
-                        pass
         # Integrity check (improvement #7)
         with zipfile.ZipFile(part, "r") as zf:
             bad = zf.testzip()
@@ -219,8 +262,9 @@ def backup_single_file_to_zip(src_file: str, dst: str,
     part = dst + ".part"
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED,
-                             compresslevel=6, allowZip64=True) as zf:
-            zf.write(src_file, arcname=arcname or os.path.basename(src_file))
+                             compresslevel=BACKUP_COMPRESSLEVEL,
+                             allowZip64=True) as zf:
+            _zip_file(zf, src_file, arcname or os.path.basename(src_file))
         with zipfile.ZipFile(part, "r") as zf:
             bad = zf.testzip()
             if bad:
