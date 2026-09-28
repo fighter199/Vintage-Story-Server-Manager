@@ -179,8 +179,12 @@ def main():
         mod_name = fn[:-3]
         try:
             mod = importlib.import_module(f"tests.{mod_name}")
-        except Exception as e:
-            print(f"SKIP {mod_name}: import failed: {e}")
+        except Exception:
+            # A file that can't be imported (e.g. it uses a pytest
+            # feature this shim lacks) must fail the run, not vanish.
+            failed += 1
+            failures.append((mod_name, traceback.format_exc()))
+            print(f"  FAIL  {mod_name}: import failed")
             continue
         for name, obj in inspect.getmembers(mod):
             if not (inspect.isclass(obj) and name.startswith("Test")):

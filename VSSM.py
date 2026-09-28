@@ -61,6 +61,7 @@ from core.constants import (APP_NAME, APP_VERSION, LOG, SERVER_LOG,
 from core.parsers import (classify_line, parse_player_event, split_client_list,
                            parse_role_response, parse_cron_expr, seconds_until_next,
                            parse_chat_message, strip_log_prefix)
+from core.profiles import PROFILE_FIELDS, unsaved_fields
 from core.settings import (load_settings, save_settings, get_active_profile,
                             load_custom_commands, chat_log_path, load_player_totals,
                             normalize_window_layout, fit_geometry)
@@ -774,6 +775,7 @@ class ServerManagerApp(tk.Tk):
             font=self.F_HDR, cursor="hand2",
             padx=4, pady=2,
         )
+        self._header_title = title          # ProfileBar adds the profile
         title.pack(side=tk.LEFT, padx=(0, 8))
         title.bind(
             "<Button-1>", lambda _e: self._toggle_header_collapsed())
@@ -1720,28 +1722,17 @@ class ServerManagerApp(tk.Tk):
         save_settings(self._settings)
         self._notify("Custom colors saved — restart to apply.", level="success")
 
+    def _profile_field_values(self) -> dict:
+        """What the UI currently shows for each per-profile setting."""
+        return {key: getattr(self, key + "_var").get() for key in PROFILE_FIELDS}
+
+    def _profile_has_unsaved_changes(self) -> bool:
+        return bool(unsaved_fields(get_active_profile(self._settings),
+                                   self._profile_field_values()))
+
     def _save_profile_settings(self):
         profile = get_active_profile(self._settings)
-        profile["server_path"]       = self.server_path_var.get()
-        profile["mods_folder"]       = self.mods_folder_var.get()
-        profile["world_folder"]      = self.world_folder_var.get()
-        profile["backup_dir"]        = self.backup_dir_var.get()
-        profile["max_backups"]       = self.max_backups_var.get()
-        profile["max_start_backups"] = self.max_start_backups_var.get()
-        profile["max_stop_backups"]  = self.max_stop_backups_var.get()
-        profile["autorestart"]       = self.autorestart_var.get()
-        profile["autosave_enabled"]  = self.autosave_enabled_var.get()
-        profile["autosave_interval"] = self.autosave_interval_var.get()
-        profile["autosave_cmd"]      = self.autosave_cmd_var.get()
-        profile["cron_expr"]         = self.cron_expr_var.get()
-        profile["shutdown_timeout"]  = self.shutdown_timeout_var.get()
-        profile["backup_before_start"] = self.backup_before_start_var.get()
-        profile["backup_before_stop"]  = self.backup_before_stop_var.get()
-        # Player-aware guards (per-profile so each server config can
-        # have its own policy).
-        profile["check_players_before_restart"]           = self.check_players_before_restart_var.get()
-        profile["check_players_before_scheduled_restart"] = self.check_players_before_scheduled_restart_var.get()
-        profile["check_players_before_shutdown"]          = self.check_players_before_shutdown_var.get()
+        profile.update(self._profile_field_values())
         # Crash-loop config (improvement #15)
         try:
             self.CRASH_LIMIT = int(self._crash_limit_var.get())
@@ -1899,34 +1890,11 @@ class ServerManagerApp(tk.Tk):
                 LOG.exception("loading the mod list failed")
 
     def _apply_default_paths(self):
+        """Show the active profile's settings (missing ones get their
+        defaults — the player checks default off, as before they existed)."""
         profile = get_active_profile(self._settings)
-        self.server_path_var.set(profile.get("server_path", ""))
-        self.mods_folder_var.set(profile.get("mods_folder", ""))
-        self.world_folder_var.set(profile.get("world_folder", ""))
-        self.backup_dir_var.set(profile.get("backup_dir", ""))
-        self.max_backups_var.set(profile.get("max_backups", "10"))
-        self.max_start_backups_var.set(profile.get("max_start_backups", "5"))
-        self.max_stop_backups_var.set(profile.get("max_stop_backups", "5"))
-        self.autorestart_var.set(profile.get("autorestart", False))
-        self.autosave_enabled_var.set(profile.get("autosave_enabled", False))
-        self.autosave_interval_var.set(profile.get("autosave_interval", "30"))
-        self.autosave_cmd_var.set(profile.get("autosave_cmd", True))
-        self.cron_expr_var.set(profile.get("cron_expr", ""))
-        self.shutdown_timeout_var.set(profile.get("shutdown_timeout", "30"))
-        self.backup_before_start_var.set(profile.get("backup_before_start", False))
-        self.backup_before_stop_var.set(profile.get("backup_before_stop", False))
-        # Player-aware guards (default off when missing — preserves
-        # the old behaviour for settings files written before this
-        # feature existed).
-        self.check_players_before_restart_var.set(
-            profile.get("check_players_before_restart", False))
-        self.check_players_before_scheduled_restart_var.set(
-            profile.get("check_players_before_scheduled_restart", False))
-        self.check_players_before_shutdown_var.set(
-            profile.get("check_players_before_shutdown", False))
-        srv = profile.get("server_path", "")
-        if srv:
-            self.server_path_var.set(srv)
+        for key, default in PROFILE_FIELDS.items():
+            getattr(self, key + "_var").set(profile.get(key, default))
 
     # ------------------------------------------------------------------
     # Browse helpers

@@ -379,9 +379,25 @@ removes chunks with few player edits automatically.
 
 ## Settings, profiles & themes
 
-All server-specific settings (paths, backups, guards, custom commands,
-autorun rules, player totals) are **per-profile**; switching profiles
-swaps everything instantly. Settings writes are atomic (tmp →
+A **profile** is one server set-up. Everything server-specific belongs
+to it: executable, mods/world/backup folders, backup limits, restart
+schedule, player-check guards, custom commands, autorun rules, playtime
+totals and chat log. Manage them from the row at the top of SETTINGS:
+
+- pick a profile in the drop-down to **switch** to it;
+- **+ New** starts an empty profile;
+- **⧉ Duplicate** copies the current one's folders, schedules, custom
+  commands and autorun rules (not its chat log or playtime);
+- **✎ Rename** renames the current one (its chat log moves with it);
+- **🗑 Delete** removes another profile — never the one in use. The
+  server, world and backups on disk aren't touched.
+
+Switching waits until the server is stopped and no backup, restore or
+world-map edit is running, and offers to save settings you changed but
+didn't save. With more than one profile, the active one is named in
+the title bar and header.
+
+Settings writes are atomic (tmp →
 `os.replace`), the schema is versioned (currently v7) with automatic
 migration and a timestamped pre-migration `.bak`. The persisted
 `log_level` is applied at startup; `--log-level` overrides it for one
@@ -441,12 +457,20 @@ existing user data.
 The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
-zip round-trips, and utility helpers. UI code is intentionally not
-exercised. 431 tests at the time of writing.
+zip round-trips, profiles, savegame reading and chunk deletion, and
+utility helpers — 495 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
 pytest tests/ -v               # or with real pytest
+```
+
+`tests/ui_smoke.py` boots the real UI on a virtual display and fails if
+a tab's widgets are cut off at 100 % or 130 % text, or the world map
+can't open a small synthetic savegame. CI runs it on every push:
+
+```bash
+xvfb-run -a -s "-screen 0 1600x900x24" python tests/ui_smoke.py
 ```
 
 ## Patcher scripts

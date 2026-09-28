@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
+from .profiles import ProfileBar
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermCheckbutton,
                       ScrollableFrame, flow_children,
@@ -19,6 +20,8 @@ def build_settings_tab(parent, app):
     sf = ScrollableFrame(parent, bg=Theme.BG_PANEL)
     sf.pack(fill=tk.BOTH, expand=True)
     pad = sf.body
+    # Profile — which server set-up the rest of this tab edits.
+    app._profile_bar = ProfileBar(pad, app)
     # Text size — applies live to every font in the app.
     size_row = tk.Frame(pad, bg=Theme.BG_PANEL)
     size_row.pack(fill=tk.X, padx=10, pady=(8, 0))

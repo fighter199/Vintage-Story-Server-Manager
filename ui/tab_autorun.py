@@ -86,8 +86,13 @@ class AutorunTab:
         return self._load_rules()
 
     def reload_from_settings(self) -> None:
-        """Re-render the list after an external settings change
-        (e.g. profile switch)."""
+        """Re-render the list after the rules were replaced from outside
+        (a profile switch). The editor is emptied too: what it held
+        belongs to the old list, and saving it would overwrite whichever
+        rule now sits at the same position."""
+        self._selected_index = None
+        self._listbox.selection_clear(0, tk.END)
+        self._load_rule_into_editor({})
         self._refresh_list()
 
     def record_audit(self, audit: AutorunAudit) -> None:
