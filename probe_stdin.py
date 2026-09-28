@@ -17,7 +17,12 @@ What it tells you:
 
 Stops the server on its own at the end (or kills it if /stop is ignored).
 """
-import os, subprocess, sys, time, threading, queue
+import os
+import subprocess
+import sys
+import time
+import threading
+import queue
 
 
 def main():

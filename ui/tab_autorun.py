@@ -23,16 +23,14 @@ ServerManagerApp; this tab only edits the rule list.
 """
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from datetime import datetime
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermCheckbutton, TermText,
-                      ScrollableFrame, panel_header, flow_children,
+from .widgets import (TermButton, TermEntry, TermCheckbutton, ScrollableFrame, panel_header, flow_children,
                       auto_wrap)
-from core.autorun import (AutorunAudit, expand_commands, make_empty_rule,
+from core.autorun import (AutorunAudit, make_empty_rule,
                           normalize_rule, validate_rule)
 
 
@@ -88,8 +86,13 @@ class AutorunTab:
         return self._load_rules()
 
     def reload_from_settings(self) -> None:
-        """Re-render the list after an external settings change
-        (e.g. profile switch)."""
+        """Re-render the list after the rules were replaced from outside
+        (a profile switch). The editor is emptied too: what it held
+        belongs to the old list, and saving it would overwrite whichever
+        rule now sits at the same position."""
+        self._selected_index = None
+        self._listbox.selection_clear(0, tk.END)
+        self._load_rule_into_editor({})
         self._refresh_list()
 
     def record_audit(self, audit: AutorunAudit) -> None:
@@ -189,7 +192,7 @@ class AutorunTab:
         lsb = ttk.Scrollbar(list_inner, orient=tk.VERTICAL,
                              style="Term.Vertical.TScrollbar",
                              command=self._listbox.yview)
-        lsb.pack(side=tk.RIGHT, fill=tk.Y)
+        lsb.pack(side=tk.RIGHT, fill=tk.Y, before=self._listbox)
         self._listbox.configure(yscrollcommand=lsb.set)
         self._listbox.bind("<<ListboxSelect>>", self._on_list_select)
 
@@ -293,7 +296,7 @@ class AutorunTab:
         cmd_sb = ttk.Scrollbar(cmd_inner, orient=tk.VERTICAL,
                                 style="Term.Vertical.TScrollbar",
                                 command=self._cmd_text.yview)
-        cmd_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        cmd_sb.pack(side=tk.RIGHT, fill=tk.Y, before=self._cmd_text)
         self._cmd_text.configure(yscrollcommand=cmd_sb.set)
 
         # Status line + buttons
@@ -374,9 +377,11 @@ class AutorunTab:
             n, unit = _split_interval(secs)
             icon = "✓" if enabled else "○"
             badges = []
-            if rule.get("run_on_start"):     badges.append("@start")
-            if rule.get("run_on_save"):      badges.append("@save")
-            if rule.get("pause_when_empty"): badges.append("paused-if-empty")
+            for key, badge in (("run_on_start", "@start"),
+                               ("run_on_save", "@save"),
+                               ("pause_when_empty", "paused-if-empty")):
+                if rule.get(key):
+                    badges.append(badge)
             badge_str = ("  " + " ".join(badges)) if badges else ""
             self._listbox.insert(
                 tk.END,

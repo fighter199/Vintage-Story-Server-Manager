@@ -7,14 +7,11 @@ where `app` is the ServerManagerApp instance (formerly `self`).
 """
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from tkinter import ttk
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
-                      Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section)
+from .widgets import (TermButton, TermText, panel_header)
 
 
 def build_config_tab(parent, app):
@@ -39,5 +36,5 @@ def build_config_tab(parent, app):
     csb = ttk.Scrollbar(cfg_inner, orient=tk.VERTICAL,
                          style="Term.Vertical.TScrollbar",
                          command=app.config_text.yview)
-    csb.pack(side=tk.RIGHT, fill=tk.Y)
+    csb.pack(side=tk.RIGHT, fill=tk.Y, before=app.config_text)
     app.config_text.configure(yscrollcommand=csb.set)

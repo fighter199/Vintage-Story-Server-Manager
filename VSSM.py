@@ -44,18 +44,14 @@ import argparse
 import logging
 import os
 import queue
-import re
-import shutil
-import socket
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
-import zipfile
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
 
@@ -63,24 +59,26 @@ from typing import Callable, Optional
 from core.constants import (APP_NAME, APP_VERSION, LOG, SERVER_LOG,
                               OPERATOR_ROLES, script_dir)
 from core.parsers import (classify_line, parse_player_event, split_client_list,
-                           parse_role_response, parse_json5_ish,
-                           parse_cron_expr, seconds_until_next,
+                           parse_role_response, parse_cron_expr, seconds_until_next,
                            parse_chat_message, strip_log_prefix)
+from core.profiles import PROFILE_FIELDS, unsaved_fields
 from core.settings import (load_settings, save_settings, get_active_profile,
-                            load_custom_commands, save_custom_commands,
-                            chat_log_path, load_player_totals,
+                            load_custom_commands, chat_log_path, load_player_totals,
                             normalize_window_layout, fit_geometry)
 from core.custom_commands import ChatCommandDispatcher
+from core.command_files import load_commands, ensure_user_file, USER_FILE
+from core.processes import find_external_servers, describe as describe_servers
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
-                         clean_mod_filename, fmt_size, backup_world_to_zip,
-                         restore_backup_zip, enable_windows_dpi_awareness)
-from ui.theme import (Theme, pick_mono_font, font_sizes,
+                        open_in_editor,
+                         fmt_size, enable_windows_dpi_awareness)
+from ui.theme import (Theme, ColorRemap, palette, pick_mono_font, font_sizes,
                       TEXT_SCALE_MIN, TEXT_SCALE_MAX)
-from ui.widgets import (TermButton, TermEntry, TermText, TermCheckbutton, TabStrip,
+from ui.widgets import (TermButton, TermEntry, TabStrip, retheme_tree,
                         flow_row, reflow_all,
                          Sparkline, ScrollableFrame, themed_frame,
-                         panel_header, collapsible_section, ToastQueue)
+                         panel_header, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
+import ui.tab_mods as _tab_mods
 from ui.tab_chat_log import ChatLogTab
 from core.chat_log import (ChatLogStore, parse_chat_with_group,
                             parse_ungrouped_chat, UNGROUPED_KEY)
@@ -88,7 +86,6 @@ from core.player_timers import PlayerTimers, fmt_duration
 from ui.tab_autorun import AutorunTab
 from ui.world_map import WorldMapTab
 from core.autorun import AutorunScheduler
-from mods.inspector import LocalModInspector
 from mods.moddb import ModDbClient
 from backup import BackupManager
 
@@ -111,49 +108,28 @@ _CLI_LOG_LEVEL: Optional[str] = None
 FALLBACK_COMMANDS = {
     "Server": {
         "/stop":   {"description": "Stop the server.", "template": "/stop", "args": []},
-        "/save":   {"description": "Save the world.",  "template": "/save",  "args": []},
-        "/players":{"description": "List connected players.", "template": "/players", "args": []},
+        "/autosavenow": {"description": "Save the world now.",
+                         "template": "/autosavenow", "args": []},
+        "/list clients": {"description": "List connected players.",
+                          "template": "/list clients", "args": []},
     }
 }
 
 
-def _normalize_command_entry(cmd_name: str, raw) -> Optional[dict]:
-    if isinstance(raw, str):
-        return {"description": raw, "template": cmd_name, "args": []}
-    if not isinstance(raw, dict):
-        return None
-    entry = dict(raw)
-    entry.setdefault("description", "")
-    entry.setdefault("template", cmd_name)
-    entry.setdefault("args", [])
-    return entry
-
-
 def load_commands_data() -> dict:
+    """Merged built-in + user command reference (see core/command_files).
+    Problems reading either file are kept in _COMMAND_FILE_PROBLEMS so
+    the UI can report them instead of failing silently."""
+    global _COMMAND_FILE_PROBLEMS
     try:
         sdir = script_dir()
     except Exception:
         sdir = os.getcwd()
-    json_path = os.path.join(sdir, "vs_commands.json")
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = parse_json5_ish(f.read())
-    except Exception:
-        return FALLBACK_COMMANDS
-    if not isinstance(data, dict) or not data:
-        return FALLBACK_COMMANDS
-    out = {}
-    for category, cmds in data.items():
-        if category.startswith("_") or not isinstance(cmds, dict):
-            continue
-        cat_out = {}
-        for cmd_name, raw in cmds.items():
-            entry = _normalize_command_entry(cmd_name, raw)
-            if entry is not None:
-                cat_out[cmd_name] = entry
-        if cat_out:
-            out[category] = cat_out
-    return out or FALLBACK_COMMANDS
+    data, _COMMAND_FILE_PROBLEMS = load_commands(sdir)
+    return data or FALLBACK_COMMANDS
+
+
+_COMMAND_FILE_PROBLEMS: list = []
 
 
 # ======================================================================
@@ -252,7 +228,7 @@ class ServerManagerApp(tk.Tk):
 
         # ---- Load settings early (needed for theme + scale) ----------
         self._settings = load_settings()
-        profile = get_active_profile(self._settings)
+        get_active_profile(self._settings)   # creates the profile if missing
 
         # Apply the persisted log level (--log-level CLI flag wins).
         if not _CLI_LOG_LEVEL:
@@ -513,6 +489,8 @@ class ServerManagerApp(tk.Tk):
             pass
 
         self.append_console("VSSM v3 initialized. Ready.", "system")
+        for problem in _COMMAND_FILE_PROBLEMS:
+            self.append_console(f"Commands: {problem}", "error")
         self.append_console(
             "Hotkeys: Ctrl+L clear · Ctrl+Enter send · ↑/↓ history · "
             "Right-click console to copy", "system")
@@ -605,19 +583,27 @@ class ServerManagerApp(tk.Tk):
                         background=Theme.AMBER_DIM, troughcolor=Theme.BG_DARK,
                         bordercolor=Theme.BORDER, arrowcolor=Theme.AMBER,
                         lightcolor=Theme.BG_DARK, darkcolor=Theme.BG_DARK)
+        # clam draws notebook and tab outlines in near-white unless told
+        # otherwise; keep them in the theme's border colour.
         style.configure("Term.TNotebook",
                         background=Theme.BG_DARK, borderwidth=0,
-                        tabmargins=[0, 0, 0, 0])
+                        tabmargins=[0, 0, 0, 0], bordercolor=Theme.BORDER,
+                        lightcolor=Theme.BORDER, darkcolor=Theme.BORDER)
         style.configure("Term.TNotebook.Tab",
                         background=Theme.BG_DARK, foreground=Theme.AMBER_DIM,
-                        padding=[14, 6], borderwidth=0, font=self.F_NORMAL)
+                        padding=[14, 6], borderwidth=0, font=self.F_NORMAL,
+                        bordercolor=Theme.BORDER, lightcolor=Theme.BG_DARK,
+                        darkcolor=Theme.BG_DARK)
         style.map("Term.TNotebook.Tab",
                   background=[("selected", Theme.BG_PANEL), ("active", Theme.BG_PANEL)],
                   foreground=[("selected", Theme.AMBER_GLOW), ("active", Theme.AMBER)],
-                  bordercolor=[("selected", Theme.BORDER)])
+                  bordercolor=[("selected", Theme.AMBER_DIM)],
+                  lightcolor=[("selected", Theme.BG_PANEL)])
         # Sidebar notebook: its tab row is drawn by ui.widgets.TabStrip.
         style.configure("Strip.TNotebook", background=Theme.BG_PANEL,
-                        borderwidth=0, tabmargins=[0, 0, 0, 0])
+                        borderwidth=0, tabmargins=[0, 0, 0, 0],
+                        bordercolor=Theme.BORDER, lightcolor=Theme.BORDER,
+                        darkcolor=Theme.BORDER)
         style.layout("Strip.TNotebook.Tab", [])
         style.configure("Term.TPanedwindow",
                         background=Theme.BORDER, sashwidth=4,
@@ -798,6 +784,7 @@ class ServerManagerApp(tk.Tk):
             font=self.F_HDR, cursor="hand2",
             padx=4, pady=2,
         )
+        self._header_title = title          # ProfileBar adds the profile
         title.pack(side=tk.LEFT, padx=(0, 8))
         title.bind(
             "<Button-1>", lambda _e: self._toggle_header_collapsed())
@@ -988,7 +975,7 @@ class ServerManagerApp(tk.Tk):
         sb = ttk.Scrollbar(console_inner, orient=tk.VERTICAL,
                            style="Term.Vertical.TScrollbar",
                            command=self.console_text.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        sb.pack(side=tk.RIGHT, fill=tk.Y, before=self.console_text)
         self.console_text.configure(yscrollcommand=sb.set)
         c = self.console_text
         c.tag_configure("info",      foreground=Theme.AMBER)
@@ -1214,7 +1201,8 @@ class ServerManagerApp(tk.Tk):
 
         def _copy_name(_e=None, n=name):
             try:
-                self.clipboard_clear(); self.clipboard_append(n)
+                self.clipboard_clear()
+                self.clipboard_append(n)
                 self._notify(f"Copied '{n}'.", level="info", duration_ms=1500)
             except Exception:
                 pass
@@ -1364,7 +1352,8 @@ class ServerManagerApp(tk.Tk):
 
     def _copy_to_clipboard(self, text):
         try:
-            self.clipboard_clear(); self.clipboard_append(text)
+            self.clipboard_clear()
+            self.clipboard_append(text)
             self._notify(f"Copied '{text}'.", level="info", duration_ms=1500)
         except Exception:
             pass
@@ -1480,7 +1469,11 @@ class ServerManagerApp(tk.Tk):
             for name, _entry in matching:
                 row_num = int(self.cmd_tree.index("end-1c").split('.')[0])
                 has_args = isinstance(_entry, dict) and bool(_entry.get("args"))
-                self.cmd_tree.insert(tk.END, f"    {name}{'  ◆' if has_args else ''}\n", ("cmd",))
+                mine = isinstance(_entry, dict) and _entry.get("_source") == "user"
+                self.cmd_tree.insert(
+                    tk.END,
+                    f"    {name}{'  ◆' if has_args else ''}{'  ★' if mine else ''}\n",
+                    ("cmd",))
                 self._cmd_index[row_num] = (category, name)
         if not self._cmd_index and not self._cmd_cat_rows:
             self.cmd_tree.insert(tk.END, "\n    (no commands match)\n", ("category",))
@@ -1535,7 +1528,9 @@ class ServerManagerApp(tk.Tk):
         self.cmd_details.delete("1.0", tk.END)
         if name and isinstance(entry, dict):
             self.cmd_details.insert(tk.END, f"{name}\n", ("title",))
-            self.cmd_details.insert(tk.END, f"{category}\n\n", ("cat",))
+            source = ("  ·  ★ yours (vs_commands_user.json)"
+                      if entry.get("_source") == "user" else "")
+            self.cmd_details.insert(tk.END, f"{category}{source}\n\n", ("cat",))
             self.cmd_details.insert(tk.END,
                 entry.get("description") or "(No description)", ("body",))
         else:
@@ -1669,7 +1664,28 @@ class ServerManagerApp(tk.Tk):
         self._refresh_commands_tree()
         total = sum(len(v) for v in new_data.values())
         self.cmd_count_var.set(f"{total} commands")
-        self._notify(f"Reloaded — {total} commands", level="success")
+        if _COMMAND_FILE_PROBLEMS:
+            for problem in _COMMAND_FILE_PROBLEMS:
+                self.append_console(f"Commands: {problem}", "error")
+            self._notify(_COMMAND_FILE_PROBLEMS[0], level="error",
+                         duration_ms=8000)
+        else:
+            self._notify(f"Reloaded — {total} commands", level="success")
+
+    def _edit_user_commands(self):
+        """Open vs_commands_user.json (created from a template if needed)
+        in the system's editor for .json files."""
+        try:
+            path = ensure_user_file(script_dir())
+        except OSError as e:
+            self._notify(f"Could not create {USER_FILE}: {e}", level="error")
+            return
+        if not open_in_editor(path):
+            self._notify(f"Open {path} in a text editor, then press Reload.",
+                         level="info", duration_ms=8000)
+        else:
+            self._notify(f"Editing {USER_FILE} — press Reload when saved.",
+                         level="info", duration_ms=6000)
 
     # ------------------------------------------------------------------
     # Settings helpers
@@ -1696,14 +1712,30 @@ class ServerManagerApp(tk.Tk):
             except Exception:
                 pass
 
-    def _on_theme_change(self):
-        preset = self.theme_preset_var.get()
+    def _apply_theme(self, preset: str) -> None:
+        """Switch colour preset live: every existing widget, text tag
+        and canvas item is mapped from the old palette to the new one."""
+        old = palette()
         Theme.apply_preset(preset)
         if preset == "custom":
             Theme.load_custom_colors(self._settings.get("custom_theme_colors", {}))
+        self._theme_preset = preset
+        self._ttk_style_ready = False
+        self._setup_ttk_style()
+        remap = ColorRemap(old, palette())
+        if remap:
+            retheme_tree(self, remap)
+        try:
+            self._refresh_tag_button_styles()   # mod browser tag chips
+        except Exception:
+            LOG.exception("restyling mod tag chips failed")
+
+    def _on_theme_change(self):
+        preset = self.theme_preset_var.get()
+        self._apply_theme(preset)
         self._settings["theme_preset"] = preset
         save_settings(self._settings)
-        self._notify("Theme applied — restart for full effect.", level="info")
+        self._notify(f"Theme: {preset}", level="info")
 
     def _save_custom_colors(self):
         colors = {}
@@ -1712,31 +1744,25 @@ class ServerManagerApp(tk.Tk):
             if val:
                 colors[key] = val
         self._settings["custom_theme_colors"] = colors
+        # Saving custom colours means wanting to see them: switch to the
+        # custom preset (or refresh it) right away.
+        self.theme_preset_var.set("custom")
+        self._settings["theme_preset"] = "custom"
         save_settings(self._settings)
-        self._notify("Custom colors saved — restart to apply.", level="success")
+        self._apply_theme("custom")
+        self._notify("Custom colors saved and applied.", level="success")
+
+    def _profile_field_values(self) -> dict:
+        """What the UI currently shows for each per-profile setting."""
+        return {key: getattr(self, key + "_var").get() for key in PROFILE_FIELDS}
+
+    def _profile_has_unsaved_changes(self) -> bool:
+        return bool(unsaved_fields(get_active_profile(self._settings),
+                                   self._profile_field_values()))
 
     def _save_profile_settings(self):
         profile = get_active_profile(self._settings)
-        profile["server_path"]       = self.server_path_var.get()
-        profile["mods_folder"]       = self.mods_folder_var.get()
-        profile["world_folder"]      = self.world_folder_var.get()
-        profile["backup_dir"]        = self.backup_dir_var.get()
-        profile["max_backups"]       = self.max_backups_var.get()
-        profile["max_start_backups"] = self.max_start_backups_var.get()
-        profile["max_stop_backups"]  = self.max_stop_backups_var.get()
-        profile["autorestart"]       = self.autorestart_var.get()
-        profile["autosave_enabled"]  = self.autosave_enabled_var.get()
-        profile["autosave_interval"] = self.autosave_interval_var.get()
-        profile["autosave_cmd"]      = self.autosave_cmd_var.get()
-        profile["cron_expr"]         = self.cron_expr_var.get()
-        profile["shutdown_timeout"]  = self.shutdown_timeout_var.get()
-        profile["backup_before_start"] = self.backup_before_start_var.get()
-        profile["backup_before_stop"]  = self.backup_before_stop_var.get()
-        # Player-aware guards (per-profile so each server config can
-        # have its own policy).
-        profile["check_players_before_restart"]           = self.check_players_before_restart_var.get()
-        profile["check_players_before_scheduled_restart"] = self.check_players_before_scheduled_restart_var.get()
-        profile["check_players_before_shutdown"]          = self.check_players_before_shutdown_var.get()
+        profile.update(self._profile_field_values())
         # Crash-loop config (improvement #15)
         try:
             self.CRASH_LIMIT = int(self._crash_limit_var.get())
@@ -1894,34 +1920,11 @@ class ServerManagerApp(tk.Tk):
                 LOG.exception("loading the mod list failed")
 
     def _apply_default_paths(self):
+        """Show the active profile's settings (missing ones get their
+        defaults — the player checks default off, as before they existed)."""
         profile = get_active_profile(self._settings)
-        self.server_path_var.set(profile.get("server_path", ""))
-        self.mods_folder_var.set(profile.get("mods_folder", ""))
-        self.world_folder_var.set(profile.get("world_folder", ""))
-        self.backup_dir_var.set(profile.get("backup_dir", ""))
-        self.max_backups_var.set(profile.get("max_backups", "10"))
-        self.max_start_backups_var.set(profile.get("max_start_backups", "5"))
-        self.max_stop_backups_var.set(profile.get("max_stop_backups", "5"))
-        self.autorestart_var.set(profile.get("autorestart", False))
-        self.autosave_enabled_var.set(profile.get("autosave_enabled", False))
-        self.autosave_interval_var.set(profile.get("autosave_interval", "30"))
-        self.autosave_cmd_var.set(profile.get("autosave_cmd", True))
-        self.cron_expr_var.set(profile.get("cron_expr", ""))
-        self.shutdown_timeout_var.set(profile.get("shutdown_timeout", "30"))
-        self.backup_before_start_var.set(profile.get("backup_before_start", False))
-        self.backup_before_stop_var.set(profile.get("backup_before_stop", False))
-        # Player-aware guards (default off when missing — preserves
-        # the old behaviour for settings files written before this
-        # feature existed).
-        self.check_players_before_restart_var.set(
-            profile.get("check_players_before_restart", False))
-        self.check_players_before_scheduled_restart_var.set(
-            profile.get("check_players_before_scheduled_restart", False))
-        self.check_players_before_shutdown_var.set(
-            profile.get("check_players_before_shutdown", False))
-        srv = profile.get("server_path", "")
-        if srv:
-            self.server_path_var.set(srv)
+        for key, default in PROFILE_FIELDS.items():
+            getattr(self, key + "_var").set(profile.get(key, default))
 
     # ------------------------------------------------------------------
     # Browse helpers
@@ -3084,7 +3087,45 @@ class ServerManagerApp(tk.Tk):
     # Thin shims so the existing tab buttons + auto-save / cron paths
     # keep their old call shapes.
     def backup_world(self, silent: bool = False):
+        if not self.is_running and self._external_servers():
+            self.append_console(
+                "A Vintage Story server VSSM didn't start seems to be running "
+                "on this world — VSSM can't ask it for a consistent "
+                "/genbackup, so this backup may catch the savegame mid-write.",
+                "warn")
         return self._backup_manager.backup_world(silent=silent)
+
+    def _external_servers(self, world: str = "") -> list:
+        """Running Vintage Story servers (other than VSSM's own) that may
+        be using `world` (default: the configured world folder)."""
+        own = []
+        if self.server_process is not None:
+            own.append(self.server_process.pid)
+        try:
+            return find_external_servers(world or self.get_world_folder(),
+                                         own_pids=own)
+        except Exception:
+            LOG.exception("external server check failed")
+            return []
+
+    def _confirm_no_external_server(self, action: str, world: str = "",
+                                    parent=None) -> bool:
+        """True if it's OK to go ahead with `action` on the savegame: no
+        outside server is using it, or the user says to continue."""
+        servers = self._external_servers(world)
+        if not servers:
+            return True
+        sure = any(s["certain"] for s in servers)
+        what = ("is running and uses this world's data folder" if sure else
+                "is running (VSSM can't tell which world it uses)")
+        return messagebox.askyesno(
+            "Server running outside VSSM",
+            f"A Vintage Story server that VSSM didn't start {what}:\n\n"
+            f"{describe_servers(servers)}\n\n"
+            f"If it uses this savegame, {action} now can corrupt the world "
+            "or be undone by the server. Stop that server first.\n\n"
+            "Continue anyway?",
+            icon="warning", default="no", parent=parent or self)
 
     def _start_async_backup(self, dst=None, silent: bool = False,
                              reason: str = "manual",
@@ -3111,6 +3152,9 @@ class ServerManagerApp(tk.Tk):
                 f"Restore '{os.path.basename(path)}'?\n"
                 "The current world will be archived first.",
                 parent=self):
+            return
+        if not self.is_running and \
+                not self._confirm_no_external_server("restoring a backup"):
             return
         self._backup_manager.restore_from_zip(path)
 
@@ -3213,6 +3257,9 @@ class ServerManagerApp(tk.Tk):
                 "The current world will be archived first.\n"
                 "The server must be stopped before restoring.",
                 parent=self):
+            return
+        if not self.is_running and \
+                not self._confirm_no_external_server("restoring a backup"):
             return
         if self._backup_manager.restore_from_zip(path):
             self._refresh_backup_list()
@@ -3683,7 +3730,6 @@ class ServerManagerApp(tk.Tk):
     # Chat log persistence helpers
     # ------------------------------------------------------------------
     def _chat_log_path_for_active_profile(self) -> str:
-        from core.settings import chat_log_path
         return chat_log_path(self._settings.get("active_profile"))
 
     def _chat_log_load(self) -> dict:
@@ -3786,196 +3832,9 @@ class ServerManagerApp(tk.Tk):
             pass
 
     # ==================================================================
-    # Mods tab — full implementation ported from v2
+    # Mods tab — the code lives in ui/tab_mods.py; its functions are
+    # attached as methods below the class (_MODS_TAB_METHODS).
     # ==================================================================
-    def _build_mods_tab(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_tab as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_installed_subtab(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_installed_subtab as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_browse_subtab(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_browse_subtab as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_browse_left(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_browse_left as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_browse_right(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_browse_right as _impl
-        return _impl(self, *args, **kwargs)
-
-    def load_mods(self):
-        from ui.tab_mods import load_mods as _impl
-        return _impl(self)
-
-    def _selected_mod(self):
-        from ui.tab_mods import _selected_mod as _impl
-        return _impl(self)
-
-    def enable_selected_mod(self):
-        from ui.tab_mods import enable_selected_mod as _impl
-        return _impl(self)
-
-    def disable_selected_mod(self):
-        from ui.tab_mods import disable_selected_mod as _impl
-        return _impl(self)
-
-    def add_mod(self):
-        from ui.tab_mods import add_mod as _impl
-        return _impl(self)
-
-    def remove_selected_mod(self):
-        from ui.tab_mods import remove_selected_mod as _impl
-        return _impl(self)
-
-    def open_selected_mod_on_moddb(self):
-        from ui.tab_mods import open_selected_mod_on_moddb as _impl
-        return _impl(self)
-
-    def _open_moddb_worker(self, *args, **kwargs):
-        from ui.tab_mods import _open_moddb_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _open_url_in_browser(self, *args, **kwargs):
-        from ui.tab_mods import _open_url_in_browser as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _mod_op_ok(self, *args, **kwargs):
-        from ui.tab_mods import _mod_op_ok as _impl
-        return _impl(self, *args, **kwargs)
-
-    def init_moddb_catalogs_async(self):
-        from ui.tab_mods import init_moddb_catalogs_async as _impl
-        return _impl(self)
-
-    def _moddb_catalogs_worker(self):
-        from ui.tab_mods import _moddb_catalogs_worker as _impl
-        return _impl(self)
-
-    def _moddb_apply_catalogs(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_apply_catalogs as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _toggle_moddb_tag(self, *args, **kwargs):
-        from ui.tab_mods import _toggle_moddb_tag as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _refresh_tag_button_styles(self):
-        from ui.tab_mods import _refresh_tag_button_styles as _impl
-        return _impl(self)
-
-    def _clear_moddb_tags(self):
-        from ui.tab_mods import _clear_moddb_tags as _impl
-        return _impl(self)
-
-    def _schedule_moddb_search(self, *args, **kwargs):
-        from ui.tab_mods import _schedule_moddb_search as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _run_moddb_search(self):
-        from ui.tab_mods import _run_moddb_search as _impl
-        return _impl(self)
-
-    def _moddb_search_worker(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_search_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _moddb_apply_search(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_apply_search as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _rerender_moddb_results(self):
-        from ui.tab_mods import _rerender_moddb_results as _impl
-        return _impl(self)
-
-    def _on_moddb_row_click(self, *args, **kwargs):
-        from ui.tab_mods import _on_moddb_row_click as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _load_mod_details_async(self, *args, **kwargs):
-        from ui.tab_mods import _load_mod_details_async as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _mod_detail_worker(self, *args, **kwargs):
-        from ui.tab_mods import _mod_detail_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _apply_mod_detail(self, *args, **kwargs):
-        from ui.tab_mods import _apply_mod_detail as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _render_mod_detail(self, *args, **kwargs):
-        from ui.tab_mods import _render_mod_detail as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _render_mod_files(self, *args, **kwargs):
-        from ui.tab_mods import _render_mod_files as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _pick_best_release(self, *args, **kwargs):
-        from ui.tab_mods import _pick_best_release as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _select_file_row(self, *args, **kwargs):
-        from ui.tab_mods import _select_file_row as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _on_moddb_file_click(self, *args, **kwargs):
-        from ui.tab_mods import _on_moddb_file_click as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _install_current_file(self):
-        from ui.tab_mods import _install_current_file as _impl
-        return _impl(self)
-
-    def _cancel_moddb_download(self):
-        from ui.tab_mods import _cancel_moddb_download as _impl
-        return _impl(self)
-
-    def _moddb_download_worker(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_download_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _finalize_moddb_download(self, *args, **kwargs):
-        from ui.tab_mods import _finalize_moddb_download as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _set_moddb_progress(self, *args, **kwargs):
-        from ui.tab_mods import _set_moddb_progress as _impl
-        return _impl(self, *args, **kwargs)
-
-    def check_mod_updates(self):
-        from ui.tab_mods import check_mod_updates as _impl
-        return _impl(self)
-
-    def _update_check_worker(self, *args, **kwargs):
-        from ui.tab_mods import _update_check_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _show_update_report(self, *args, **kwargs):
-        from ui.tab_mods import _show_update_report as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _bulk_update(self, *args, **kwargs):
-        from ui.tab_mods import _bulk_update as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _bulk_update_worker(self, *args, **kwargs):
-        from ui.tab_mods import _bulk_update_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _finalize_bulk_update(self, *args, **kwargs):
-        from ui.tab_mods import _finalize_bulk_update as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _set_moddb_status(self, *args, **kwargs):
-        from ui.tab_mods import _set_moddb_status as _impl
-        return _impl(self, *args, **kwargs)
-
     def _normalize_side(self, raw):
         """Fold any representation of the 'side' field to one of:
         'server', 'client', 'universal', 'unknown'."""
@@ -4007,9 +3866,64 @@ class ServerManagerApp(tk.Tk):
         # imports and drop the method entirely.
         return fmt_size(n)
 
-    def _open_current_mod_in_browser(self):
-        from ui.tab_mods import _open_current_mod_in_browser as _impl
-        return _impl(self)
+
+# The mods tab is implemented in ui/tab_mods.py as functions taking the
+# app as their first argument. The rest of the app — and those functions
+# themselves — call them as app.<name>(...), so they're attached to the
+# class as methods.
+_MODS_TAB_METHODS = (
+    "_build_mods_tab",
+    "_build_mods_installed_subtab",
+    "_build_mods_browse_subtab",
+    "_build_mods_browse_left",
+    "_build_mods_browse_right",
+    "load_mods",
+    "_selected_mod",
+    "enable_selected_mod",
+    "disable_selected_mod",
+    "add_mod",
+    "remove_selected_mod",
+    "open_selected_mod_on_moddb",
+    "_open_moddb_worker",
+    "_open_url_in_browser",
+    "_mod_op_ok",
+    "init_moddb_catalogs_async",
+    "_moddb_catalogs_worker",
+    "_moddb_apply_catalogs",
+    "_toggle_moddb_tag",
+    "_refresh_tag_button_styles",
+    "_clear_moddb_tags",
+    "_schedule_moddb_search",
+    "_run_moddb_search",
+    "_moddb_search_worker",
+    "_moddb_apply_search",
+    "_rerender_moddb_results",
+    "_on_moddb_row_click",
+    "_load_mod_details_async",
+    "_mod_detail_worker",
+    "_apply_mod_detail",
+    "_render_mod_detail",
+    "_render_mod_files",
+    "_pick_best_release",
+    "_select_file_row",
+    "_on_moddb_file_click",
+    "_install_current_file",
+    "_cancel_moddb_download",
+    "_moddb_download_worker",
+    "_finalize_moddb_download",
+    "_set_moddb_progress",
+    "check_mod_updates",
+    "_update_check_worker",
+    "_show_update_report",
+    "_bulk_update",
+    "_bulk_update_worker",
+    "_finalize_bulk_update",
+    "_set_moddb_status",
+    "_open_current_mod_in_browser",
+)
+for _name in _MODS_TAB_METHODS:
+    setattr(ServerManagerApp, _name, getattr(_tab_mods, _name))
+del _name
 
 
 # ======================================================================

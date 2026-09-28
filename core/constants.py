@@ -6,10 +6,9 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
-import sys
 
 APP_NAME    = "VSSM"
-APP_VERSION = "3.3"
+APP_VERSION = "3.4"
 SETTINGS_SCHEMA_VERSION = 7
 
 # -----------------------------------------------------------------------

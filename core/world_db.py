@@ -57,6 +57,7 @@ DEFAULT_MAP_SIZE_Z = 1024000
 MAPCHUNK_RAIN_HEIGHT_FIELD = 3
 MAPCHUNK_TERRAIN_HEIGHT_FIELD = 7
 SAVEGAME_MAP_SIZE_FIELDS = {1: "map_size_x", 2: "map_size_y", 3: "map_size_z"}
+SAVEGAME_LAND_CLAIMS_FIELD = 27          # repeated LandClaim (1.22)
 
 
 class WorldDbError(Exception):
@@ -286,6 +287,106 @@ def parse_savegame_meta(blob) -> dict:
         if name and wire == 0 and 0 < value < (1 << 31):
             meta[name] = value
     return meta
+
+
+# ----------------------------------------------------------------------
+# Land claims
+# ----------------------------------------------------------------------
+class LandClaim:
+    """One land claim from the SaveGame record (vsapi LandClaim).
+
+    `areas` are (x1, y1, z1, x2, y2, z2) block boxes with each min <= max
+    (the game stores the corners in whatever order they were marked)."""
+
+    __slots__ = ("areas", "protection_level", "owner_uid", "owner_name",
+                 "description")
+
+    def __init__(self, areas, protection_level=0, owner_uid="",
+                 owner_name="", description=""):
+        self.areas = list(areas)
+        self.protection_level = protection_level
+        self.owner_uid = owner_uid
+        self.owner_name = owner_name
+        self.description = description
+
+    @property
+    def label(self) -> str:
+        return self.description or self.owner_name or "Land claim"
+
+    def chunk_rects(self, margin: int = 0) -> list[tuple[int, int, int, int]]:
+        """Inclusive (cx0, cz0, cx1, cz1) chunk-column rectangles covering
+        each area, grown by `margin` chunks. The far edge counts as
+        claimed too, so the rectangles never fall short."""
+        return [(x1 // CHUNK_SIZE - margin, z1 // CHUNK_SIZE - margin,
+                 x2 // CHUNK_SIZE + margin, z2 // CHUNK_SIZE + margin)
+                for x1, _y1, z1, x2, _y2, z2 in self.areas]
+
+    def __repr__(self) -> str:
+        return f"LandClaim({self.label!r}, {len(self.areas)} area(s))"
+
+
+def _int32(value: int) -> int:
+    """protobuf int32: negative numbers arrive as 64-bit two's complement."""
+    return value - (1 << 64) if value >= 1 << 63 else value
+
+
+def _parse_cuboid(buf) -> tuple:
+    """A Cuboidi message (fields 1-6 = X1 Y1 Z1 X2 Y2 Z2, all varints;
+    protobuf leaves out zeros). ValueError if it's anything else."""
+    coords = [0] * 6
+    for field, wire, value in iter_fields(buf):
+        if wire != 0 or not 1 <= field <= 6:
+            raise ValueError("not a cuboid")
+        v = _int32(value)
+        if not -(1 << 31) <= v < (1 << 31):
+            raise ValueError("not a cuboid")
+        coords[field - 1] = v
+    x1, y1, z1, x2, y2, z2 = coords
+    return (min(x1, x2), min(y1, y2), min(z1, z2),
+            max(x1, x2), max(y1, y2), max(z1, z2))
+
+
+def _parse_land_claim(buf) -> LandClaim:
+    """ValueError unless `buf` is a LandClaim with at least one area:
+    1 Areas (repeated Cuboidi), 2 ProtectionLevel, 3 OwnedByEntityId,
+    4 OwnedByPlayerUid, 5 OwnedByPlayerGroupUid, 6 LastKnownOwnerName,
+    7 Description (8+ are permissions, not needed here)."""
+    areas, strings, level = [], {}, 0
+    for field, wire, value in iter_fields(buf):
+        if field == 1:
+            if wire != 2:
+                raise ValueError("not a land claim")
+            areas.append(_parse_cuboid(buf[value[0]:value[1]]))
+        elif field == 2 and wire == 0:
+            level = _int32(value)
+        elif field in (4, 6, 7):
+            if wire != 2:
+                raise ValueError("not a land claim")
+            strings[field] = bytes(buf[value[0]:value[1]]).decode("utf-8")
+    if not areas:
+        raise ValueError("not a land claim")
+    return LandClaim(areas, level, strings.get(4, ""), strings.get(6, ""),
+                     strings.get(7, ""))
+
+
+def parse_land_claims(blob) -> list[LandClaim]:
+    """Every land claim in a SaveGame record.
+
+    Claims are field 27 in 1.22. Rather than trust that number across
+    game versions, each top-level repeated field is tried, and only one
+    whose every entry parses as a claim counts — anything else (mod
+    data, block ids) fails on its first entry."""
+    candidates: dict = {}
+    for field, wire, value in iter_fields(blob):
+        if wire == 2:
+            candidates.setdefault(field, []).append(value)
+    order = sorted(candidates, key=lambda f: f != SAVEGAME_LAND_CLAIMS_FIELD)
+    for field in order:
+        try:
+            return [_parse_land_claim(blob[s:e]) for s, e in candidates[field]]
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return []
 
 
 # ----------------------------------------------------------------------
@@ -855,7 +956,8 @@ def _friendly_sqlite_error(e: Exception) -> str:
 
 
 def read_world_meta(path: str) -> dict:
-    """Map size + sea level from the SaveGame record (defaults if absent)."""
+    """Map size, sea level and land claims from the SaveGame record
+    (defaults if absent)."""
     conn = _open_for_read(path)
     try:
         row = conn.execute("SELECT data FROM gamedata LIMIT 1").fetchone()
@@ -865,11 +967,17 @@ def read_world_meta(path: str) -> dict:
         conn.close()
     meta = {"map_size_x": DEFAULT_MAP_SIZE_X, "map_size_y": DEFAULT_MAP_SIZE_Y,
             "map_size_z": DEFAULT_MAP_SIZE_Z}
+    claims: list = []
     if row and row[0]:
         try:
             meta = parse_savegame_meta(row[0])
         except ValueError:
             pass
+        try:
+            claims = parse_land_claims(row[0])
+        except ValueError:
+            pass
+    meta["claims"] = claims
     meta["sea_level"] = sea_level(meta["map_size_y"])
     meta["file_size"] = os.path.getsize(path)
     return meta

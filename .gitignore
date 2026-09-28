@@ -11,3 +11,7 @@ moddb_cache.json
 
 # Built by make_release.py
 Release/
+
+# Your own COMMANDS-tab entries (never shipped)
+vs_commands_user.json
+vs_commands.json.old

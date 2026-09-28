@@ -33,7 +33,7 @@ from core.world_db import (CHUNK_SIZE, MISSING, REGION_CHUNKS, ChunkSelection,
                            load_overview, read_world_meta, render_ppm,
                            read_players, rewrite_savegame)
 from .theme import Theme
-from .widgets import TermButton, TermCheckbutton, panel_header
+from .widgets import TermButton, TermCheckbutton, auto_wrap, panel_header
 
 
 # Zoom = screen pixels per chunk = 2 ** exponent.
@@ -42,6 +42,10 @@ _MAX_ZOOM_EXP = 6
 # Full-detail tile budget: columns read and pixels rendered per tile.
 _DETAIL_MAX_COLUMNS = 30_000
 _DETAIL_MAX_PIXELS = 1_500_000
+
+GOTO_PROMPT = "Go to…"
+# Chunks kept around a land claim when the delete dialog protects it.
+PROTECT_MARGIN_CHUNKS = 1
 
 
 def _savegame_label(path: str) -> str:
@@ -76,6 +80,12 @@ class WorldMapTab:
 
         row = tk.Frame(pad, bg=Theme.BG_PANEL)
         row.pack(fill=tk.X, pady=(10, 0))
+        # Buttons are packed first so the combobox is what shrinks.
+        TermButton(row, "Browse…", self._browse, variant="amber",
+                   font_spec=app.F_SMALL, padx=8, pady=3
+                   ).pack(side=tk.RIGHT, padx=(6, 0))
+        TermButton(row, "↻", self.refresh_saves, variant="amber",
+                   font_spec=app.F_SMALL, padx=8, pady=3).pack(side=tk.RIGHT)
         tk.Label(row, text="Savegame:", fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
                  font=app.F_NORMAL).pack(side=tk.LEFT)
         self._combo = ttk.Combobox(row, textvariable=self._save_var,
@@ -83,11 +93,6 @@ class WorldMapTab:
                                    font=app.F_NORMAL)
         self._combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         self._combo.bind("<<ComboboxSelected>>", lambda _e: self._update_info())
-        TermButton(row, "↻", self.refresh_saves, variant="amber",
-                   font_spec=app.F_SMALL, padx=8, pady=3).pack(side=tk.LEFT)
-        TermButton(row, "Browse…", self._browse, variant="amber",
-                   font_spec=app.F_SMALL, padx=8, pady=3
-                   ).pack(side=tk.LEFT, padx=(6, 0))
 
         info_lbl = tk.Label(pad, textvariable=self._info_var, fg=Theme.MUTED,
                             bg=Theme.BG_PANEL, font=app.F_SMALL, anchor=tk.W,
@@ -250,7 +255,10 @@ class WorldMapWindow(tk.Toplevel):
         self._grid_var = tk.BooleanVar(value=True)
         self._players_var = tk.BooleanVar(value=True)
         self._players: list[dict] = []
-        self._goto_var = tk.StringVar(value="Go to player…")
+        self._claims_var = tk.BooleanVar(value=True)
+        self._claims: list = []                 # core.world_db.LandClaim
+        self._goto_targets: dict = {}           # label -> (chunk x, chunk z, kind)
+        self._goto_var = tk.StringVar(value=GOTO_PROMPT)
         self._hover_var = tk.StringVar(value="")
         self._sel_var = tk.StringVar(value="Nothing selected.")
         self._world_var = tk.StringVar(value="Loading…")
@@ -276,6 +284,9 @@ class WorldMapWindow(tk.Toplevel):
             TermButton(bar, "Invert", self._invert, **small),
             TermButton(bar, "Clear", self._clear_selection, **small),
             TermButton(bar, "Keep centre…", self._keep_centre, **small),
+            TermButton(bar, "Keep near players…", self._keep_near_players,
+                       **small),
+            TermButton(bar, "Keep claims…", self._keep_claims, **small),
         ]
         view_buttons = [
             TermButton(bar, "−", lambda: self._zoom_step(-1), **small),
@@ -287,14 +298,16 @@ class WorldMapWindow(tk.Toplevel):
                                    font_spec=app.F_SMALL, command=self._redraw)
         players_chk = TermCheckbutton(bar, "Players", self._players_var,
                                       font_spec=app.F_SMALL, command=self._redraw)
+        claims_chk = TermCheckbutton(bar, "Claims", self._claims_var,
+                                     font_spec=app.F_SMALL, command=self._redraw)
         self._goto_combo = ttk.Combobox(bar, textvariable=self._goto_var,
-                                        state="readonly", width=18,
+                                        state="readonly", width=20,
                                         style="Term.TCombobox", font=app.F_SMALL)
-        self._goto_combo.bind("<<ComboboxSelected>>", self._goto_player)
+        self._goto_combo.bind("<<ComboboxSelected>>", self._goto)
         app._install_wrapping_row(
             bar, [*self._mode_buttons.values(), *self._sel_buttons,
                   *view_buttons, self._reload_btn, grid_chk, players_chk,
-                  self._goto_combo],
+                  claims_chk, self._goto_combo],
             spacing=6)
         self._set_mode("pan")
 
@@ -341,8 +354,9 @@ class WorldMapWindow(tk.Toplevel):
                            (self._sel_var, Theme.AMBER),
                            (self._note_var, Theme.CYAN),
                            (self._hover_var, Theme.MUTED)):
-            tk.Label(left, textvariable=var, fg=color, bg=Theme.BG_PANEL,
-                     font=app.F_SMALL, anchor=tk.W).pack(fill=tk.X)
+            auto_wrap(tk.Label(left, textvariable=var, fg=color,
+                               bg=Theme.BG_PANEL, font=app.F_SMALL,
+                               anchor=tk.W)).pack(fill=tk.X)
         self._update_controls()
 
     # --------------------------------------------------------------- close
@@ -426,7 +440,9 @@ class WorldMapWindow(tk.Toplevel):
                    players=()):
         self._busy = None
         self._meta = meta
-        self._set_players(players)
+        self._players = list(players)
+        self._claims = list(meta.get("claims") or [])
+        self._update_goto_targets()
         first_load = self._base.grid is None
         self._base.grid = grid
         self._base.index = index
@@ -460,6 +476,9 @@ class WorldMapWindow(tk.Toplevel):
         if self._players:
             n = len(self._players)
             text += f" · {n} player{'s' if n != 1 else ''} (last saved positions)"
+        if self._claims:
+            n = len(self._claims)
+            text += f" · {n} land claim{'s' if n != 1 else ''}"
         self._world_var.set(text)
 
     def _show_message(self, text: str | None) -> None:
@@ -581,31 +600,43 @@ class WorldMapWindow(tk.Toplevel):
     def _player_label(p: dict) -> str:
         return p.get("name") or (p.get("uid") or "?")[:10]
 
-    def _set_players(self, players) -> None:
-        self._players = list(players)
-        labels = [self._player_label(p) for p in self._players
-                  if p.get("dimension", 0) == 0]
-        self._goto_combo.configure(values=labels)
-        self._goto_combo.configure(state="readonly" if labels else "disabled")
-        self._goto_var.set("Go to player…" if labels else "No players saved")
-
     def _player_chunk(self, p: dict) -> tuple[float, float]:
         return p["x"] / CHUNK_SIZE, p["z"] / CHUNK_SIZE
 
-    def _goto_player(self, _event=None) -> None:
-        name = self._goto_var.get()
+    def _update_goto_targets(self) -> None:
+        """The "Go to…" list: every player, then every land claim."""
+        targets: dict = {}
+
+        def put(label, *value):
+            n, unique = 2, label
+            while unique in targets:
+                unique, n = f"{label} ({n})", n + 1
+            targets[unique] = value
+
         for p in self._players:
-            if self._player_label(p) == name and p.get("dimension", 0) == 0:
-                c = self._canvas
-                self._zoom_exp = max(self._zoom_exp, 3)      # 8 px per chunk
-                s = self._scale()
-                fx, fz = self._player_chunk(p)
-                self._ox = fx - c.winfo_width() / (2 * s)
-                self._oz = fz - c.winfo_height() / (2 * s)
-                self._players_var.set(True)
-                self._on_view_changed()
-                break
-        self.after(10, lambda: self._goto_var.set("Go to player…"))
+            if p.get("dimension", 0) == 0:
+                put(self._player_label(p), *self._player_chunk(p), "player")
+        for claim in self._claims:
+            x1, _y1, z1, x2, _y2, z2 = claim.areas[0]
+            put(f"⚑ {claim.label}", (x1 + x2 + 1) / 2 / CHUNK_SIZE,
+                (z1 + z2 + 1) / 2 / CHUNK_SIZE, "claim")
+        self._goto_targets = targets
+        self._goto_combo.configure(values=list(targets),
+                                   state="readonly" if targets else "disabled")
+        self._goto_var.set(GOTO_PROMPT if targets else "No players or claims")
+
+    def _goto(self, _event=None) -> None:
+        target = self._goto_targets.get(self._goto_var.get())
+        if target is not None:
+            fx, fz, kind = target
+            c = self._canvas
+            self._zoom_exp = max(self._zoom_exp, 3)          # 8 px per chunk
+            s = self._scale()
+            self._ox = fx - c.winfo_width() / (2 * s)
+            self._oz = fz - c.winfo_height() / (2 * s)
+            (self._players_var if kind == "player" else self._claims_var).set(True)
+            self._on_view_changed()
+        self.after(10, lambda: self._goto_var.set(GOTO_PROMPT))
 
     def _players_in_selection(self) -> list[dict]:
         return [p for p in self._players if p.get("dimension", 0) == 0
@@ -640,6 +671,49 @@ class WorldMapWindow(tk.Toplevel):
                     c.create_text(x + 9 + dx, y + dy, text=name, anchor=tk.W,
                                   fill=color, font=self._app.F_SMALL,
                                   tags="overlay")
+
+    # --------------------------------------------------------------- claims
+    def _claims_in_selection(self) -> list:
+        return [c for c in self._claims
+                if any(self._sel.bands(*r) for r in c.chunk_rects())]
+
+    def _claims_at(self, bx: int, bz: int) -> list:
+        return [c for c in self._claims
+                if any(x1 <= bx <= x2 and z1 <= bz <= z2
+                       for x1, _y1, z1, x2, _y2, z2 in c.areas)]
+
+    def _draw_claims(self, cw: int, ch: int) -> None:
+        c = self._canvas
+        for claim in self._claims:
+            # Named once it's big enough on screen not to bury the map
+            # (hovering names it at any size).
+            label_at = None
+            for x1, _y1, z1, x2, _y2, z2 in claim.areas:
+                xa, ya = self._to_screen(x1 / CHUNK_SIZE, z1 / CHUNK_SIZE)
+                xb, yb = self._to_screen((x2 + 1) / CHUNK_SIZE,
+                                         (z2 + 1) / CHUNK_SIZE)
+                if xb < -4 or yb < -4 or xa > cw + 4 or ya > ch + 4:
+                    continue
+                if label_at is None and xb - xa >= 24:
+                    label_at = (xa, ya)
+                # At least a few pixels, so small claims stay visible
+                # when zoomed far out.
+                if xb - xa < 5:
+                    mid = (xa + xb) / 2
+                    xa, xb = mid - 2.5, mid + 2.5
+                if yb - ya < 5:
+                    mid = (ya + yb) / 2
+                    ya, yb = mid - 2.5, mid + 2.5
+                c.create_rectangle(max(-4, xa), max(-4, ya), min(cw + 4, xb),
+                                   min(ch + 4, yb), outline=Theme.PURPLE,
+                                   width=2, tags="overlay")
+            if label_at is not None:
+                x, y = label_at
+                if -200 <= x <= cw and 0 <= y <= ch + 20:
+                    for dx, dy, color in ((1, 1, "#000000"), (0, 0, Theme.PURPLE)):
+                        c.create_text(x + dx, y - 3 + dy, text=f"⚑ {claim.label}",
+                                      anchor=tk.SW, fill=color,
+                                      font=self._app.F_SMALL, tags="overlay")
 
     # ----------------------------------------------------------------- view
     def _scale(self) -> float:
@@ -808,6 +882,8 @@ class WorldMapWindow(tk.Toplevel):
             x0, z0, x1, z1, _s = self._detail_rect
             rect(x0, z0, x1, z1, outline=Theme.CYAN, width=1, dash=(2, 4))
 
+        if self._claims_var.get():
+            self._draw_claims(cw, ch)
         if self._players_var.get():
             self._draw_players(cw, ch)
 
@@ -824,6 +900,15 @@ class WorldMapWindow(tk.Toplevel):
                           fill=Theme.AMBER_GLOW, font=self._app.F_SMALL,
                           tags="overlay")
         c.tag_raise(self._msg_item)
+
+    def retheme(self, remap) -> None:
+        """After a theme change (see ui.widgets.retheme_tree): tool
+        buttons and overlays in the new colours."""
+        for btn in self._mode_buttons.values():
+            if hasattr(btn, "_orig_bg"):
+                btn._orig_bg = remap(btn._orig_bg, "background", True)
+        self._set_mode(self._mode)
+        self._redraw()
 
     # ---------------------------------------------------------------- mouse
     def _set_mode(self, mode: str) -> None:
@@ -917,6 +1002,11 @@ class WorldMapWindow(tk.Toplevel):
         if player is not None:
             what += (f"   ·   player {self._player_label(player)} "
                      f"(y={player['y']:.0f})")
+        if self._claims_var.get():
+            for claim in self._claims_at(bx, bz)[:2]:
+                owner = claim.owner_name
+                what += f"   ·   ⚑ {claim.label}" + (
+                    f" ({owner})" if owner and owner != claim.label else "")
         self._hover_var.set(
             f"X {rel_x:,}  Z {rel_z:,}   ·   chunk {cx}, {cz}   ·   "
             f"region {cx // REGION_CHUNKS}, {cz // REGION_CHUNKS}   ·   {what}")
@@ -952,6 +1042,64 @@ class WorldMapWindow(tk.Toplevel):
         self._sel.clear()
         self._sel.base_all = True
         self._sel.subtract(mcx - r, mcz - r, mcx + r - 1, mcz + r - 1)
+        self._refresh_selection()
+
+    def _keep_near_players(self) -> None:
+        if self._base.grid is None:
+            return
+        players = [p for p in self._players if p.get("dimension", 0) == 0]
+        if not players:
+            messagebox.showinfo("Keep near players",
+                                "No player positions are saved in this "
+                                "savegame.", parent=self)
+            return
+        combine = not self._sel.is_empty()
+        radius = simpledialog.askinteger(
+            "Keep near players",
+            f"Keep a square around each of the {len(players)} players' last "
+            "saved positions; everything else gets selected"
+            + (" (added to what the current selection already keeps)."
+               if combine else ".")
+            + "\n\nHow many blocks around each player should be kept?",
+            parent=self, initialvalue=1000, minvalue=0, maxvalue=1_000_000)
+        if radius is None:
+            return
+        r = -(-radius // CHUNK_SIZE)
+        if not combine:
+            self._sel.clear()
+            self._sel.base_all = True
+        for p in players:
+            cx = math.floor(p["x"] / CHUNK_SIZE)
+            cz = math.floor(p["z"] / CHUNK_SIZE)
+            self._sel.subtract(cx - r, cz - r, cx + r, cz + r)
+        self._players_var.set(True)
+        self._refresh_selection()
+
+    def _keep_claims(self) -> None:
+        if self._base.grid is None:
+            return
+        if not self._claims:
+            messagebox.showinfo("Keep claims", "This savegame has no land "
+                                "claims.", parent=self)
+            return
+        combine = not self._sel.is_empty()
+        margin = simpledialog.askinteger(
+            "Keep claims",
+            f"Keep all {len(self._claims)} land claims; everything else gets "
+            "selected"
+            + (" (added to what the current selection already keeps)."
+               if combine else ".")
+            + "\n\nHow many blocks around each claim should be kept too?",
+            parent=self, initialvalue=64, minvalue=0, maxvalue=1_000_000)
+        if margin is None:
+            return
+        if not combine:
+            self._sel.clear()
+            self._sel.base_all = True
+        for claim in self._claims:
+            for rect in claim.chunk_rects(margin=-(-margin // CHUNK_SIZE)):
+                self._sel.subtract(*rect)
+        self._claims_var.set(True)
         self._refresh_selection()
 
     def _count_selection(self) -> tuple[int, int, bool]:
@@ -1036,6 +1184,10 @@ class WorldMapWindow(tk.Toplevel):
                     "Reload the map now? (Your selection is kept.)",
                     parent=self):
                 self._load()
+            return
+        if not app._confirm_no_external_server(
+                "deleting chunks", world=os.path.dirname(os.path.abspath(self.path)),
+                parent=self):
             return
         locked, _sidecars = app._savegame_lock_status()
         if any(os.path.abspath(p) == os.path.abspath(self.path) for p in locked):
@@ -1128,6 +1280,19 @@ class WorldMapWindow(tk.Toplevel):
                         f"selection: {names}{more}. They'll log back in to "
                         "regenerated terrain, possibly underground.",
                   Theme.RED, app)
+        claimed = self._claims_in_selection()
+        protect_var = tk.BooleanVar(value=bool(claimed))
+        if claimed:
+            names = ", ".join(c.label for c in claimed[:6])
+            more = f" and {len(claimed) - 6} more" if len(claimed) > 6 else ""
+            TermCheckbutton(
+                body, f"Keep the {len(claimed)} land claim(s) inside the "
+                      f"selection, plus {PROTECT_MARGIN_CHUNKS} chunk around "
+                      f"them: {names}{more}",
+                protect_var, font_spec=app.F_SMALL).pack(fill=tk.X, pady=(8, 0))
+            _note(body, "   Untick to delete claimed land too — the claim "
+                        "stays, but everything built inside it is lost.",
+                  Theme.MUTED, app)
 
         mode_var = tk.StringVar(
             value="rewrite" if can_rewrite and (fraction >= 0.2 or file_size < 2**31)
@@ -1188,7 +1353,7 @@ class WorldMapWindow(tk.Toplevel):
                        "lost; the terrain regenerates from the world seed when "
                        "a player next goes there.\n"
                        "• Players who logged out inside the area may log back "
-                       "in underground. Land claims are kept.\n"
+                       "in underground.\n"
                        "• Story locations inside the area may not come back.")
                  ).pack(fill=tk.X, pady=(10, 0))
         sync()
@@ -1203,6 +1368,7 @@ class WorldMapWindow(tk.Toplevel):
                     "undone.", icon="warning", parent=dlg):
                 return
             result.update(mode=mode_var.get(), regions=regions_var.get(),
+                          protect=claimed if protect_var.get() else [],
                           keep_original=rewrite and keep_orig_var.get(),
                           zip_backup=not rewrite and zip_var.get() and can_zip,
                           expected_size=keep)
@@ -1243,6 +1409,9 @@ class WorldMapWindow(tk.Toplevel):
         extent = self._extent()
         sel = ChunkSelection()
         sel.base_all, sel.ops = self._sel.base_all, list(self._sel.ops)
+        for claim in opts.get("protect", ()):
+            for rect in claim.chunk_rects(margin=PROTECT_MARGIN_CHUNKS):
+                sel.subtract(*rect)
         path = self.path
         map_size_y = self._meta["map_size_y"]
         rewrite = opts["mode"] == "rewrite"

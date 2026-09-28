@@ -116,6 +116,72 @@ class Theme:
 
 
 # -----------------------------------------------------------------------
+# Live preset changes
+# -----------------------------------------------------------------------
+def palette() -> dict:
+    """The colours a preset can change: {key: "#rrggbb"}, lower case."""
+    return {k: getattr(Theme, k).lower() for k in Theme.CUSTOMIZABLE_KEYS}
+
+
+_FG_OPTIONS = frozenset({"foreground", "fg", "activeforeground",
+                         "selectforeground", "insertbackground",
+                         "disabledforeground", "fill"})
+_TEXT_KEYS = ("AMBER", "AMBER_DIM", "AMBER_GLOW")
+_BUTTON_KEYS = ("BG_BTN_AMBER", "BG_BTN_AMBER_HOVER")
+_BORDER_KEYS = ("BORDER", "AMBER_DIM", "AMBER")
+_BG_KEYS = ("BG_HEADER", "BG_SELECT", "BG_BTN_AMBER", "BG_BTN_AMBER_HOVER",
+            "AMBER_FAINT", "BORDER")
+
+
+class ColorRemap:
+    """Maps colours of an old palette to a new one, for recolouring
+    widgets that were built with the old one.
+
+    Presets reuse colours — amber's BG_SELECT and BG_BTN_AMBER_HOVER are
+    both #2a1d00, but green's differ — so where one old colour stood for
+    several keys, the option it's set on and whether the widget is a
+    button decide which key it was."""
+
+    def __init__(self, old: dict, new: dict):
+        self._by_value: dict = {}          # old colour -> {key: new colour}
+        for key, value in old.items():
+            target = str(new.get(key, value)).lower()
+            self._by_value.setdefault(str(value).lower(), {})[key] = target
+        self._changes = any(k != t for k, keys in self._by_value.items()
+                            for t in keys.values())
+
+    def __bool__(self) -> bool:
+        return self._changes
+
+    def __call__(self, color, option: str = "", button: bool = False):
+        """The new colour for `color`, or `color` itself if it isn't one
+        of the old palette's."""
+        if not isinstance(color, str):
+            return color
+        keys = self._by_value.get(color.lower())
+        if not keys:
+            return color
+        targets = set(keys.values())
+        if len(targets) == 1:
+            target = targets.pop()
+        else:
+            target = keys[self._pick(keys, option.lstrip("-"), button)]
+        return color if target == color.lower() else target
+
+    @staticmethod
+    def _pick(keys: dict, option: str, button: bool) -> str:
+        order: tuple = ()
+        if button:
+            order += _BUTTON_KEYS
+        if option in _FG_OPTIONS:
+            order += _TEXT_KEYS
+        elif option.startswith("highlight") or option == "outline":
+            order += _BORDER_KEYS
+        order += _BG_KEYS + _TEXT_KEYS
+        return next((k for k in order if k in keys), next(iter(keys)))
+
+
+# -----------------------------------------------------------------------
 # Font resolution
 # -----------------------------------------------------------------------
 FONT_CANDIDATES = [

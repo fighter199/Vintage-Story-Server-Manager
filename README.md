@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.3**
+Current version: **3.4**
 
 ## Feature highlights
 
@@ -80,6 +80,10 @@ First launch creates `vserverman_settings.json`, a `logs/` folder, and
 - **Development branch** — the full source, including `tests/`,
   `run_tests.py` and `make_release.py`. New work lands here first.
 
+GitHub Actions runs the test suite on every push to the development
+branch, and publishes a GitHub Release (zip + changelog notes)
+automatically whenever `Main` receives a new version.
+
 To package a release from the development branch:
 
 ```bash
@@ -95,7 +99,8 @@ VSSM5/
 ├── VSSM.py                 entry point + ServerManagerApp (Tk host)
 ├── run_tests.py            pytest-free test runner (also runs a lint pass)
 ├── requirements.txt        optional extras + per-platform notes
-├── vs_commands.json        command-reference data for the COMMANDS tab
+├── vs_commands_builtin.json  command reference for the COMMANDS tab
+│                           (yours go in vs_commands_user.json)
 ├── core/
 │   ├── constants.py        APP_NAME/VERSION, logging bootstrap, OPERATOR_ROLES
 │   ├── parsers.py          log-line classification, player events, chat,
@@ -317,6 +322,10 @@ takes 42 s), a full-detail tile 1–5 s, under 30 MB of RAM.
 | All / Invert / Clear     | selection shortcuts                      |
 | Keep centre…             | select everything except a square around |
 |                          | the map centre (in-game 0, 0)            |
+| Keep near players…       | select everything except a square around |
+|                          | every player (combines with Keep centre) |
+| Keep claims…             | select everything except every land      |
+|                          | claim plus a margin (combines as above)  |
 
 The status bar shows in-game coordinates (relative to the map
 centre), chunk and region under the cursor, surface height, and the
@@ -325,9 +334,17 @@ selection's size with an estimate of how much of the file it is.
 **Players** are shown as cyan markers with their names, at their last
 *saved* position (the server saves when a player logs out and on every
 autosave, so online players may have moved on). Hover a marker for its
-height, use *Go to player…* to jump to someone, or untick *Players* to
-hide them. Deleting an area that a player logged out in shows a warning
+height, use *Go to…* to jump to someone, or untick *Players* to hide
+them. Deleting an area that a player logged out in shows a warning
 naming them first.
+
+**Land claims** are outlined in purple — players' claims and the ones
+traders put around their camps — and named once zoomed in far enough;
+hover one for its description and owner, or pick it from *Go to…*.
+When a selection covers claims, the delete dialog lists them and by
+default **keeps them** (plus one chunk around each). Untick that to
+delete claimed land too: the claim itself stays in the savegame, but
+everything built inside it is lost.
 
 **🗑 Delete selected…** removes the selected chunk columns (their map
 chunk plus every chunk above it, dimension 0 only); the server
@@ -354,7 +371,7 @@ changed since it was loaded, and map regions (512×512 climate/ore data)
 are only removed when no column inside them is left.
 
 Anything built, stored or tamed in a deleted area is lost; players who
-logged out there may log back in underground. Land claims are kept.
+logged out there may log back in underground.
 The server's own `/db prune` command is a complementary tool — it
 removes chunks with few player edits automatically.
 
@@ -372,21 +389,66 @@ removes chunks with few player edits automatically.
 
 ## Settings, profiles & themes
 
-All server-specific settings (paths, backups, guards, custom commands,
-autorun rules, player totals) are **per-profile**; switching profiles
-swaps everything instantly. Settings writes are atomic (tmp →
+A **profile** is one server set-up. Everything server-specific belongs
+to it: executable, mods/world/backup folders, backup limits, restart
+schedule, player-check guards, custom commands, autorun rules, playtime
+totals and chat log. Manage them from the row at the top of SETTINGS:
+
+- pick a profile in the drop-down to **switch** to it;
+- **+ New** starts an empty profile;
+- **⧉ Duplicate** copies the current one's folders, schedules, custom
+  commands and autorun rules (not its chat log or playtime);
+- **✎ Rename** renames the current one (its chat log moves with it);
+- **🗑 Delete** removes another profile — never the one in use. The
+  server, world and backups on disk aren't touched.
+
+Switching waits until the server is stopped and no backup, restore or
+world-map edit is running, and offers to save settings you changed but
+didn't save. With more than one profile, the active one is named in
+the title bar and header.
+
+Settings writes are atomic (tmp →
 `os.replace`), the schema is versioned (currently v7) with automatic
 migration and a timestamped pre-migration `.bak`. The persisted
 `log_level` is applied at startup; `--log-level` overrides it for one
 run.
 
 Themes: amber (default), green, cyan, neutral dark, or a fully custom
-palette via the CUSTOM THEME tab. UI scale: `Ctrl +` / `Ctrl -` /
-`Ctrl 0`, persisted.
+palette via the CUSTOM THEME tab. Changing theme — or saving custom
+colours — recolours the whole app at once, open world map included; no
+restart. Text size: `Ctrl +` / `Ctrl -` / `Ctrl 0`, also live and
+persisted.
 
 Hotkeys: `Ctrl+L` clear console · `Ctrl+Enter` send · `↑/↓` command
 history · `Ctrl+/` focus command entry · right-click console/player
 rows for context menus.
+
+## Your own commands (COMMANDS tab)
+
+The COMMANDS tab lists console commands from two files next to
+`VSSM.py`:
+
+- `vs_commands_builtin.json` — ships with VSSM and is replaced on every
+  update. Don't edit it.
+- `vs_commands_user.json` — yours; updates never touch it. Press
+  **✎ My commands** to create it (from a small example) and open it,
+  then **↻ Reload**.
+
+Same format in both: categories containing commands. A user command
+with the same name as a built-in one replaces it, and `"/name": null`
+hides a built-in one. Your commands are marked ★. Comments (`//`) and
+trailing commas are allowed; if the file has a mistake, the console
+says where and the built-in list still loads.
+
+Upgrading from 3.3 or earlier, where the list was `vs_commands.json`:
+commands you added or edited there are moved into
+`vs_commands_user.json` automatically on first launch, and the old
+file is kept as `vs_commands.json.old`.
+
+The built-in list only contains commands that work from the server
+console. Commands that act on the caller's own position, inventory,
+waypoints or land claims (`/land …`, `/waypoint …`, self-teleport
+`/tp` forms, `/kill`, …) were removed in 3.4.
 
 ## Data files
 
@@ -395,6 +457,7 @@ rows for context menus.
 | `vserverman_settings.json`    | all settings, profiles, rules, playtime    |
 | `chat_log_<profile>.json`     | per-profile chat history                   |
 | `moddb_cache.json`            | TTL cache for mod-update lookups           |
+| `vs_commands_user.json`       | your own COMMANDS-tab entries (optional)   |
 | `logs/vserverman.log`         | application log (rotating)                 |
 | `logs/server-output.log`      | mirror of raw server stdout (rotating)     |
 
@@ -406,12 +469,21 @@ existing user data.
 The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
-zip round-trips, and utility helpers. UI code is intentionally not
-exercised. 431 tests at the time of writing.
+zip round-trips, profiles, savegame reading and chunk deletion, and
+utility helpers — 507 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
 pytest tests/ -v               # or with real pytest
+```
+
+`tests/ui_smoke.py` boots the real UI on a virtual display and fails if
+a tab's widgets are cut off at 100 % or 130 % text, the world map
+can't open a small synthetic savegame and its land claim, or a live
+theme change leaves any of the old theme's colours behind. CI runs it on every push:
+
+```bash
+xvfb-run -a -s "-screen 0 1600x900x24" python tests/ui_smoke.py
 ```
 
 ## Patcher scripts
@@ -427,6 +499,34 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.4 (September 2026)
+
+- **Land claims on the world map** — claims (players' and traders')
+  are outlined and listed in *Go to…*; *Keep claims…* selects
+  everything else, and deleting keeps claimed land by default.
+- **Your own commands survive updates** — the COMMANDS list is now a
+  built-in file plus `vs_commands_user.json` for your additions and
+  edits (✎ My commands). Edits made to the old `vs_commands.json` are
+  moved over automatically on first start.
+- **Server-only command list** — 25 commands that need an in-game
+  player to run them (land claiming, waypoints, /kill, /gamemode for
+  yourself, …) were removed from the COMMANDS reference.
+- **Profiles** — create, duplicate, rename, delete and switch profiles
+  from SETTINGS; each keeps its own server, folders, schedules, custom
+  commands, autorun rules, chat log and playtime.
+- **Live themes** — changing theme or saving custom colours recolours
+  the app immediately; no restart.
+- **Faster backups** — about 2.6× quicker, with progress by size and
+  cancel mid-file.
+- **Keep near players…** — world-map tool that selects everything
+  except squares around players.
+- **Safety** — when a server VSSM didn't start is running on the same
+  world, deleting chunks and restoring a backup ask first, and backups
+  warn that they may catch the savegame mid-write.
+- **Fixed:** scrollbars, role checkboxes, buttons and labels cut off
+  or hidden in narrow panels or at larger text sizes; notebook outlines
+  drawn in near-white instead of the theme colour.
 
 ### v3.3 (September 2026)
 

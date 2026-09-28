@@ -7,17 +7,10 @@ Cancel / Prune controls.
 """
 from __future__ import annotations
 
-import os
-import time
 import tkinter as tk
-from datetime import datetime
-from tkinter import messagebox, ttk
 
-from core.utils import fmt_size
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
-                      Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section, flow_children)
+from .widgets import (TermButton, TermEntry, ScrollableFrame, panel_header, flow_children)
 
 
 def build_backup_tab(parent, app):

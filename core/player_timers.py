@@ -24,7 +24,7 @@ Design notes:
 from __future__ import annotations
 
 import time
-from typing import Callable, Dict, Iterable
+from typing import Callable, Dict
 
 
 class PlayerTimers:

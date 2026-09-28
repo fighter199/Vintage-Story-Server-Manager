@@ -1,14 +1,16 @@
 """
 ui/widgets.py — Reusable themed widget toolkit.
 
-All widgets adapt to the current Theme class values so a preset change
-(even mid-session via apply_preset) is reflected on new widget creation.
+Widgets are built from the current Theme values; after a preset change
+retheme_tree() recolours the ones that already exist.
 """
 from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
 from collections import deque
+
+from core.constants import LOG
 
 from .theme import Theme
 
@@ -72,6 +74,14 @@ class TermButton(tk.Label):
             self.configure(fg=self._fg, bg=self._bg, cursor="hand2")
         else:
             self.configure(fg=Theme.MUTED, bg=self._bg, cursor="arrow")
+
+    def retheme(self, remap) -> None:
+        """Called by retheme_tree: the colours kept for hover and
+        enable/disable follow the new palette too."""
+        self._fg = remap(self._fg, "foreground", True)
+        self._bg = remap(self._bg, "background", True)
+        self._bg_hover = remap(self._bg_hover, "background", True)
+        self._border = remap(self._border, "highlightbackground", True)
 
 
 # -----------------------------------------------------------------------
@@ -155,6 +165,11 @@ class Sparkline(tk.Canvas):
         self._color = color or Theme.AMBER
         self._baseline = baseline_color or Theme.AMBER_FAINT
         self.bind("<Configure>", lambda _e: self._redraw())
+
+    def retheme(self, remap) -> None:
+        self._color = remap(self._color, "fill")
+        self._baseline = remap(self._baseline, "fill")
+        self._redraw()
 
     def push(self, value):
         try:
@@ -256,12 +271,14 @@ class ScrollableFrame(tk.Frame):
 
     def _on_scroll_set(self, first, last):
         try:
-            f, l = float(first), float(last)
+            top, bottom = float(first), float(last)
         except ValueError:
             return
-        needs_bar = (f > 0.0) or (l < 1.0)
+        needs_bar = (top > 0.0) or (bottom < 1.0)
         if needs_bar and not self._sb_packed:
-            self._sb.pack(side=tk.RIGHT, fill=tk.Y)
+            # before= so the bar keeps its room in a narrow panel
+            # instead of the canvas taking all of it.
+            self._sb.pack(side=tk.RIGHT, fill=tk.Y, before=self._canvas)
             self._sb_packed = True
         elif not needs_bar and self._sb_packed:
             self._sb.pack_forget()
@@ -335,6 +352,9 @@ class TabStrip(tk.Frame):
                           fg=Theme.AMBER_GLOW if sel else Theme.AMBER_DIM,
                           highlightbackground=Theme.AMBER if sel else Theme.BORDER,
                           highlightcolor=Theme.AMBER if sel else Theme.BORDER)
+
+    def retheme(self, _remap) -> None:
+        self._restyle()
 
     def _hover(self, lbl, inside: bool) -> None:
         for frame, other in self._tabs:
@@ -417,18 +437,34 @@ def flow_children(container, spacing=6, pady_between=4):
                     spacing=spacing, pady_between=pady_between)
 
 
+_WRAPPED: list = []            # (label, refit) for reflow_all()
+
+
 def auto_wrap(label, minimum=120):
-    """Wrap a label's text to the width it's actually given rather than
-    a fixed wraplength (which clips in narrow panels). Pack it with
-    fill=tk.X so it follows its parent's width. Returns the label."""
+    """Wrap a label's (or check/radio button's) text to the width it's
+    actually given rather than a fixed wraplength (which clips in narrow
+    panels). Pack it with fill=tk.X so it follows its parent's width.
+    Returns the label."""
     label.configure(anchor=tk.W, justify=tk.LEFT)
 
-    def _fit(event):
-        width = max(minimum, event.width - 4)
+    def _fit(given):
+        if given <= 1:
+            return
+        width = max(minimum, given - 4)
         if int(label.cget("wraplength")) != width:
             label.configure(wraplength=width)
+        # Padding and a check/radio indicator sit beside the text, so
+        # take whatever still sticks out off the wrap length too (more
+        # than once when the text only just fitted the first length).
+        for _ in range(4):
+            over = label.winfo_reqwidth() - given
+            if over <= 0 or width <= minimum:
+                break
+            width = max(minimum, width - over)
+            label.configure(wraplength=width)
 
-    label.bind("<Configure>", _fit, add="+")
+    label.bind("<Configure>", lambda e: _fit(e.width), add="+")
+    _WRAPPED.append((label, lambda: _fit(label.winfo_width())))
     return label
 
 
@@ -445,6 +481,18 @@ def reflow_all() -> None:
         reflow()
         alive.append((container, reflow))
     _FLOW_ROWS[:] = alive
+    # A new font size changes what a wrapped label needs but not the
+    # width it's given, so it gets no <Configure> either.
+    wrapped = []
+    for label, refit in _WRAPPED:
+        try:
+            if not label.winfo_exists():
+                continue
+            refit()
+        except tk.TclError:
+            continue
+        wrapped.append((label, refit))
+    _WRAPPED[:] = wrapped
 
 
 # -----------------------------------------------------------------------
@@ -575,8 +623,10 @@ def collapsible_section(parent, title, font_spec=None,
                 body.pack(side=tk.BOTTOM, fill=tk.X, before=hdr)
                 title_label.configure(text=f"▾ {state['title']}")
             if on_toggle:
-                try: on_toggle(state["collapsed"])
-                except Exception: pass
+                try:
+                    on_toggle(state["collapsed"])
+                except Exception:
+                    pass
     else:
         hdr.pack(side=side, fill=tk.X, anchor=anchor, pady=pady)
         body.pack(side=side, fill=tk.X, after=hdr)
@@ -592,8 +642,10 @@ def collapsible_section(parent, title, font_spec=None,
                 body.pack(side=side, fill=tk.X, after=hdr)
                 title_label.configure(text=f"▾ {state['title']}")
             if on_toggle:
-                try: on_toggle(state["collapsed"])
-                except Exception: pass
+                try:
+                    on_toggle(state["collapsed"])
+                except Exception:
+                    pass
 
     for w in (hdr, title_label):
         w.bind("<Button-1>", toggle)
@@ -662,3 +714,88 @@ class ToastQueue:
                 pass
             self._label = None
         self._root.after(120, self._show_next)
+
+
+# -----------------------------------------------------------------------
+# Live theme changes
+# -----------------------------------------------------------------------
+_WIDGET_COLOR_OPTIONS = (
+    "background", "foreground", "activebackground", "activeforeground",
+    "highlightbackground", "highlightcolor", "selectbackground",
+    "selectforeground", "inactiveselectbackground", "insertbackground",
+    "selectcolor", "disabledforeground", "troughcolor",
+    "readonlybackground", "disabledbackground")
+_TAG_COLOR_OPTIONS = ("foreground", "background", "selectforeground",
+                      "selectbackground", "underlinefg", "overstrikefg")
+_ITEM_COLOR_OPTIONS = ("fill", "outline", "activefill", "activeoutline")
+
+
+def retheme_tree(root, remap) -> int:
+    """Recolour everything under `root` from the old palette to the new
+    one (`remap` is a ui.theme.ColorRemap): widget colour options, text
+    tags and canvas items — Toplevels and Tcl-only widgets such as a
+    combobox's drop-down list included. Widgets flagged `_no_retheme`
+    (colour swatches) are left alone. Afterwards each widget's
+    `retheme(remap)` hook runs, for colours kept in Python — children's
+    before their parent's, so a window restyling its buttons sees their
+    updated colours. Returns the number of colours changed."""
+    tcl = root.tk
+    changed = 0
+    hooks = []
+
+    def recolor(getter, setter, options, button):
+        nonlocal changed
+        for opt in options:
+            try:
+                value = str(getter("-" + opt))
+            except tk.TclError:
+                continue
+            new = remap(value, opt, button)
+            if new != value:
+                try:
+                    setter("-" + opt, new)
+                    changed += 1
+                except tk.TclError:
+                    pass
+
+    stack = [str(root)]
+    while stack:
+        path = stack.pop()
+        try:
+            stack.extend(str(c) for c in tcl.splitlist(
+                tcl.call("winfo", "children", path)))
+            wclass = str(tcl.call("winfo", "class", path))
+        except tk.TclError:
+            continue
+        try:
+            widget = root.nametowidget(path)
+        except KeyError:
+            widget = None                     # created by Tcl, not Python
+        if getattr(widget, "_no_retheme", False):
+            continue
+        button = isinstance(widget, TermButton)
+        recolor(lambda o, p=path: tcl.call(p, "cget", o),
+                lambda o, v, p=path: tcl.call(p, "configure", o, v),
+                _WIDGET_COLOR_OPTIONS, button)
+        try:
+            if wclass == "Text":
+                for tag in tcl.splitlist(tcl.call(path, "tag", "names")):
+                    recolor(lambda o, p=path, t=tag: tcl.call(p, "tag", "cget", t, o),
+                            lambda o, v, p=path, t=tag: tcl.call(p, "tag", "configure", t, o, v),
+                            _TAG_COLOR_OPTIONS, False)
+            elif wclass == "Canvas":
+                for item in tcl.splitlist(tcl.call(path, "find", "all")):
+                    recolor(lambda o, p=path, i=item: tcl.call(p, "itemcget", i, o),
+                            lambda o, v, p=path, i=item: tcl.call(p, "itemconfigure", i, o, v),
+                            _ITEM_COLOR_OPTIONS, False)
+        except tk.TclError:
+            pass
+        hook = getattr(widget, "retheme", None)
+        if callable(hook):
+            hooks.append(hook)
+    for hook in reversed(hooks):             # collected parents-first
+        try:
+            hook(remap)
+        except Exception:
+            LOG.exception("retheme hook failed")
+    return changed

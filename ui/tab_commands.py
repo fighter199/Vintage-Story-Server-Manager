@@ -7,14 +7,11 @@ where `app` is the ServerManagerApp instance (formerly `self`).
 """
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from tkinter import ttk
 
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
-                      Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section)
+from .widgets import (TermButton, TermEntry, ScrollableFrame, panel_header)
 
 
 def build_commands_tab(parent, app):
@@ -29,6 +26,9 @@ def build_commands_tab(parent, app):
     TermButton(search_row, "↻ Reload", app._reload_commands_json,
                variant="amber", font_spec=app.F_SMALL,
                padx=8, pady=2).pack(side=tk.RIGHT)
+    TermButton(search_row, "✎ My commands", app._edit_user_commands,
+               variant="amber", font_spec=app.F_SMALL,
+               padx=8, pady=2).pack(side=tk.RIGHT, padx=(0, 4))
     app.cmd_count_var = tk.StringVar(value="")
     tk.Label(search_row, textvariable=app.cmd_count_var,
              fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
@@ -90,7 +90,7 @@ def build_commands_tab(parent, app):
     tsb = ttk.Scrollbar(tree_inner, orient=tk.VERTICAL,
                          style="Term.Vertical.TScrollbar",
                          command=app.cmd_tree.yview)
-    tsb.pack(side=tk.RIGHT, fill=tk.Y)
+    tsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.cmd_tree)
     app.cmd_tree.configure(yscrollcommand=tsb.set)
     app.cmd_tree.tag_configure("category",
                                 foreground=Theme.AMBER_GLOW,

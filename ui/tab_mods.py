@@ -18,24 +18,24 @@ import os
 import re
 import shutil
 import threading
-import time
 import urllib.parse
-import webbrowser
-import zipfile
 from datetime import datetime
 from tkinter import filedialog, messagebox
+from typing import TYPE_CHECKING
 import tkinter as tk
 from tkinter import ttk
 
 from core.constants import LOG
-from core.utils import clean_mod_filename, fmt_size
+from core.utils import clean_mod_filename
 from core.parsers import version_key, version_is_newer as _vsim_version_is_newer
 from mods.inspector import LocalModInspector
 from .theme import Theme
-from .widgets import (TermButton, TermEntry, TermText, TermCheckbutton,
-                      Sparkline, ScrollableFrame, themed_frame,
-                      panel_header, collapsible_section,
+from .widgets import (TermButton, TermEntry, TermCheckbutton,
+                      ScrollableFrame, collapsible_section,
                       flow_children)
+
+if TYPE_CHECKING:
+    from VSSM import ServerManagerApp  # for type hints only
 
 
 def _sorted_releases(releases: list) -> list:
@@ -107,10 +107,6 @@ def _build_mods_tab(app: 'ServerManagerApp', parent):
     app._build_mods_browse_subtab(browse_tab)
 
 # ------------------------------------------------------------------
-
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from VSSM import ServerManagerApp  # for type hints only
 
 # Mods sub-tab — INSTALLED (original file manager)
 # ------------------------------------------------------------------
@@ -231,7 +227,7 @@ def _build_mods_installed_subtab(app: 'ServerManagerApp', parent):
     msb = ttk.Scrollbar(list_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.mod_listbox.yview)
-    msb.pack(side=tk.RIGHT, fill=tk.Y)
+    msb.pack(side=tk.RIGHT, fill=tk.Y, before=app.mod_listbox)
     app.mod_listbox.configure(yscrollcommand=msb.set)
 
 # ------------------------------------------------------------------
@@ -395,7 +391,7 @@ def _build_mods_browse_left(app: 'ServerManagerApp', parent):
     rsb = ttk.Scrollbar(res_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.moddb_results_text.yview)
-    rsb.pack(side=tk.RIGHT, fill=tk.Y)
+    rsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.moddb_results_text)
     app.moddb_results_text.configure(yscrollcommand=rsb.set)
 
     t = app.moddb_results_text
@@ -505,7 +501,7 @@ def _build_mods_browse_right(app: 'ServerManagerApp', parent):
     dsb = ttk.Scrollbar(det_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.moddb_details_text.yview)
-    dsb.pack(side=tk.RIGHT, fill=tk.Y)
+    dsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.moddb_details_text)
     app.moddb_details_text.configure(yscrollcommand=dsb.set)
     d = app.moddb_details_text
     d.tag_configure("title", foreground=Theme.CYAN, font=app.F_HDR)
@@ -539,7 +535,7 @@ def _build_mods_browse_right(app: 'ServerManagerApp', parent):
     fsb = ttk.Scrollbar(file_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.moddb_files_text.yview)
-    fsb.pack(side=tk.RIGHT, fill=tk.Y)
+    fsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.moddb_files_text)
     app.moddb_files_text.configure(yscrollcommand=fsb.set)
 
     ft = app.moddb_files_text
@@ -1750,7 +1746,6 @@ def _bulk_update_worker(app: 'ServerManagerApp', reports):
     failures = []
     for i, r in enumerate(reports, 1):
         info = r["info"]
-        detail = r.get("detail") or {}
         latest = r.get("latest") or {}
         name = info.get("name") or "(unnamed)"
         app.after(0, app._set_moddb_status,

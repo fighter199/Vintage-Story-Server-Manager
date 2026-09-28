@@ -473,11 +473,10 @@ class BackupManager:
             return
         self._last_progress_post = time.time()
         pct = int((got / max(1, total)) * 100)
+        msg = f"Backup: {pct}% ({fmt_size(got)} of {fmt_size(total)})"
         self._host.after(
             0,
-            lambda p=pct: self._host._notify(
-                f"Backup: {p}% ({got}/{total} files)",
-                level="info", duration_ms=600))
+            lambda m=msg: self._host._notify(m, level="info", duration_ms=600))
 
     def _backup_done(self, dst: str, size: int, elapsed: float,
                      silent: bool, reason: str) -> None:
