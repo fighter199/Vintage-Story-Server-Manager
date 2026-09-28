@@ -62,6 +62,8 @@ from core.parsers import (classify_line, parse_player_event, split_client_list,
                            parse_role_response, parse_cron_expr, seconds_until_next,
                            parse_chat_message, strip_log_prefix)
 from core.profiles import PROFILE_FIELDS, unsaved_fields
+from core.updates import (PROJECT_URL, UpdateCheckError, fetch_latest_release,
+                          is_newer)
 from core.settings import (load_settings, save_settings, get_active_profile,
                             load_custom_commands, chat_log_path, load_player_totals,
                             normalize_window_layout, fit_geometry)
@@ -73,8 +75,9 @@ from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
                          fmt_size, enable_windows_dpi_awareness)
 from ui.theme import (Theme, ColorRemap, palette, pick_mono_font, font_sizes,
                       TEXT_SCALE_MIN, TEXT_SCALE_MAX)
-from ui.widgets import (TermButton, TermEntry, TabStrip, retheme_tree,
-                        flow_row, reflow_all,
+from ui.widgets import (TermButton, TermEntry, TermCheckbutton, TabStrip,
+                        retheme_tree, flow_row, flow_children, reflow_all,
+                        auto_wrap,
                          Sparkline, ScrollableFrame, themed_frame,
                          panel_header, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
@@ -495,6 +498,8 @@ class ServerManagerApp(tk.Tk):
             "Hotkeys: Ctrl+L clear · Ctrl+Enter send · ↑/↓ history · "
             "Right-click console to copy", "system")
         LOG.info("%s %s started", APP_NAME, APP_VERSION)
+        if self.auto_update_check_var.get():
+            self.after(4000, self._check_for_updates)
         self.after(150, self.init_moddb_catalogs_async)
 
     # ------------------------------------------------------------------
@@ -813,7 +818,8 @@ class ServerManagerApp(tk.Tk):
         header.columnconfigure(2, weight=1, uniform="hdr")
 
         left_col = tk.Frame(header, bg=Theme.BG_DARK)
-        left_col.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 8))
+        left_col.grid(row=0, column=0, rowspan=2, sticky="new", padx=(0, 8))
+        self._build_project_row(left_col)
         # setup_warning_var was created in _build_ui (before this body
         # was built) so the toolbar's compact indicator can bind to it.
         self.setup_warning_label = tk.Label(
@@ -846,6 +852,96 @@ class ServerManagerApp(tk.Tk):
                       "Ctrl + 0      reset text size",
                  fg=Theme.AMBER_DIM, bg=Theme.BG_DARK,
                  font=self.F_SMALL, justify=tk.RIGHT).pack(anchor="ne", pady=(2, 0))
+
+    # ------------------------------------------------------------------
+    # Project page + update check (header, far left)
+    # ------------------------------------------------------------------
+    def _build_project_row(self, parent):
+        row = tk.Frame(parent, bg=Theme.BG_DARK)
+        row.pack(fill=tk.X, pady=(0, 4))
+        TermButton(row, "⌂ GitHub", self._open_project_page, variant="amber",
+                   font_spec=self.F_SMALL, padx=8, pady=2).pack(side=tk.LEFT)
+        self._update_btn = TermButton(
+            row, "⟳ Check for updates", lambda: self._check_for_updates(manual=True),
+            variant="amber", font_spec=self.F_SMALL, padx=8, pady=2)
+        self._update_btn.pack(side=tk.LEFT, padx=(6, 0))
+        flow_children(row)
+        self.auto_update_check_var = tk.BooleanVar(
+            value=bool(self._settings.get("auto_check_updates", False)))
+        chk = TermCheckbutton(parent, "Check for updates on startup",
+                              self.auto_update_check_var,
+                              font_spec=self.F_SMALL,
+                              command=self._on_auto_update_toggle)
+        chk.configure(bg=Theme.BG_DARK, activebackground=Theme.BG_DARK)
+        auto_wrap(chk).pack(fill=tk.X, pady=(0, 6))
+        self._update_check_running = False
+
+    def _open_project_page(self, url: str = PROJECT_URL):
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception as e:
+            LOG.exception("webbrowser.open failed for %s", url)
+            self._notify(f"Could not open browser: {e}", level="error")
+
+    def _on_auto_update_toggle(self):
+        self._settings["auto_check_updates"] = bool(self.auto_update_check_var.get())
+        save_settings(self._settings)
+
+    def _check_for_updates(self, manual: bool = False):
+        """Ask GitHub for the latest release in the background. A manual
+        check always reports back; the startup check only speaks up
+        when there is something newer."""
+        if self._update_check_running:
+            return
+        self._update_check_running = True
+        if manual:
+            self._notify("Checking for updates…", level="info")
+
+        def work():
+            info = error = None
+            try:
+                info = fetch_latest_release()
+            except UpdateCheckError as e:
+                error = str(e)
+            except Exception as e:               # pragma: no cover
+                LOG.exception("update check failed")
+                error = f"{type(e).__name__}: {e}"
+            try:
+                self.after(0, self._on_update_checked, info, error, manual)
+            except (RuntimeError, tk.TclError):
+                pass                             # app closed meanwhile
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_checked(self, info, error, manual: bool):
+        self._update_check_running = False
+        if error:
+            LOG.info("update check: %s", error)
+            if manual:
+                self._notify(f"Update check failed: {error}", level="error",
+                             duration_ms=5000)
+            return
+        if not is_newer(info["version"]):
+            if manual:
+                self._notify(f"You're up to date (VSSM {APP_VERSION}).",
+                             level="success")
+            return
+        version, url = info["version"], info["url"]
+        self._update_btn.configure(text=f"⬆ GET VSSM {version}")
+        self._update_btn._command = lambda: self._open_project_page(url)
+        self.append_console(
+            f"VSSM {version} is available (you have {APP_VERSION}): {url}",
+            "success")
+        if manual:
+            if messagebox.askyesno(
+                    "Update available",
+                    f"VSSM {version} is available — you have {APP_VERSION}."
+                    "\n\nOpen the download page?", parent=self):
+                self._open_project_page(url)
+        else:
+            self._notify(f"VSSM {version} is available — see the header.",
+                         level="success", duration_ms=6000)
 
     def _toggle_header_collapsed(self):
         """Flip the header's collapsed state and persist."""
@@ -1328,8 +1424,29 @@ class ServerManagerApp(tk.Tk):
         # Improvement #14: ban confirmation dialog
         m.add_command(label="Ban...",
                       command=lambda n=player_name: self._prompt_and_ban(n))
-        m.add_command(label="Teleport to...",
-                      command=lambda n=player_name: self._teleport_to(n))
+        # Teleports only between online players: the console has no
+        # position of its own, so "/tp <name>" alone does nothing useful.
+        others = [p for p in self._players if p != player_name]
+        m.add_separator()
+        if others:
+            menu_opts = dict(tearoff=0, bg=Theme.BG_PANEL, fg=Theme.AMBER,
+                             activebackground=Theme.BG_SELECT,
+                             activeforeground=Theme.AMBER_GLOW, bd=0,
+                             font=self.F_SMALL)
+            send_to = tk.Menu(m, **menu_opts)
+            bring = tk.Menu(m, **menu_opts)
+            for other in sorted(others, key=str.lower):
+                send_to.add_command(
+                    label=other,
+                    command=lambda a=player_name, b=other: self._teleport_player(a, b))
+                bring.add_command(
+                    label=other,
+                    command=lambda a=other, b=player_name: self._teleport_player(a, b))
+            m.add_cascade(label=f"Teleport {player_name} to", menu=send_to)
+            m.add_cascade(label=f"Teleport to {player_name}", menu=bring)
+        else:
+            m.add_command(label="Teleport (no other players online)",
+                          state=tk.DISABLED)
         try:
             m.tk_popup(event.x_root, event.y_root)
         finally:
@@ -1382,8 +1499,9 @@ class ServerManagerApp(tk.Tk):
         self._send_internal_command(f"/ban {name} {reason.strip()}")
         self.append_console(f"❯ /ban {name} {reason.strip()}", "echo")
 
-    def _teleport_to(self, name):
-        self._run_admin_cmd(f"/tp {name}")
+    def _teleport_player(self, who: str, destination: str):
+        """Move online player `who` to online player `destination`."""
+        self._run_admin_cmd(f"/tp {who} {destination}")
 
     def _prompt_and_run(self, title, prompt, cmd_builder):
         from tkinter import simpledialog
