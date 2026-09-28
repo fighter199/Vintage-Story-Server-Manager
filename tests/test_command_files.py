@@ -142,4 +142,7 @@ class TestLoad:
     def test_shipped_builtin_file_is_valid(self):
         builtin = read_command_file(os.path.join(ROOT, BUILTIN_FILE))
         merged = merge_commands(builtin, {})
-        assert sum(len(v) for v in merged.values()) == 83
+        assert sum(len(v) for v in merged.values()) == 84
+        tp = next(c["/tp (player to player)"] for c in merged.values()
+                  if "/tp (player to player)" in c)
+        assert tp["template"] == "/tp {player} {destination}"
