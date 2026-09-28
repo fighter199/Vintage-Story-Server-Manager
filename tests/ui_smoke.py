@@ -11,7 +11,8 @@ the checkout), boots it, and fails if:
   * any exception reaches Tk's error handler,
   * any widget in a sidebar tab is cut off horizontally — past the tab's
     edge, squeezed, or hidden for lack of room — at 100 % or 130 % text,
-  * the world map can't open a small synthetic savegame,
+  * the world map can't open a small synthetic savegame or its land
+    claim, or "Keep claims…" doesn't keep just the claim,
   * after a live theme change any colour of the previous theme is left
     anywhere (widgets, text tags, canvas items, button hover colours,
     ttk styles).
@@ -42,10 +43,21 @@ def make_world(app_dir: str, folder: str) -> str:
     # nothing (settings, logs) is ever written into the checkout.
     sys.path[:0] = [app_dir, os.path.join(app_dir, "tests")]
     sys.modules.setdefault("pytest", type(sys)("pytest"))
+    import sqlite3
+    from test_world_db import claim_blob, f_bytes, f_varint
     from test_world_db import make_world as build   # synthetic .vcdbs
     os.makedirs(folder, exist_ok=True)
-    return build(os.path.join(folder, "smoke.vcdbs"), x0=16000, z0=16000,
+    path = build(os.path.join(folder, "smoke.vcdbs"), x0=16000, z0=16000,
                  w=24, h=24)
+    # One land claim over chunks 16004..16005, 16004..16005.
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE gamedata SET data = ?", (
+        f_varint(1, 1024000) + f_varint(2, 256) + f_varint(3, 1024000)
+        + f_bytes(27, claim_blob([(512128, 100, 512128, 512191, 120, 512191)],
+                                 description="Smoke base")),))
+    conn.commit()
+    conn.close()
+    return path
 
 
 _TEXT_CLASSES = ("Label", "Button", "Checkbutton", "Radiobutton",
@@ -214,6 +226,15 @@ def main() -> int:
             elif win._base.index.hits != 24 * 24:
                 failures.append(f"world map read {win._base.index.hits} columns, "
                                 f"expected {24 * 24}")
+            elif [c.label for c in win._claims] != ["Smoke base"]:
+                failures.append(f"world map claims: {win._claims}")
+            else:
+                from tkinter import simpledialog
+                simpledialog.askinteger = lambda *a, **k: 0
+                win._keep_claims()
+                settle(2)
+                if win._claims_in_selection() or not win._sel.contains(16000, 16000):
+                    failures.append("Keep claims… did not keep just the claim")
             # With the map window open, so its canvas is covered too.
             check_theme_change()
         except Exception:

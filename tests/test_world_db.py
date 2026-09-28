@@ -16,6 +16,7 @@ from core.world_db import (
     delete_chunk_columns,
     encode_chunk_pos,
     iter_fields,
+    parse_land_claims,
     load_detail,
     load_overview,
     parse_mapchunk_heights,
@@ -58,6 +59,29 @@ def f_bytes(field, payload):
 
 def f_packed(field, values):
     return f_bytes(field, b"".join(varint(v) for v in values))
+
+
+def f_int32(field, value):
+    """protobuf int32: negatives are sent as 64-bit two's complement."""
+    return f_varint(field, value + (1 << 64) if value < 0 else value)
+
+
+def cuboid_blob(x1, y1, z1, x2, y2, z2):
+    # protobuf leaves out zero values
+    return b"".join(f_int32(i, v) for i, v in
+                    enumerate((x1, y1, z1, x2, y2, z2), 1) if v)
+
+
+def claim_blob(areas, level=99999, uid="uid-1", owner="Player Alice",
+               description=""):
+    body = b"".join(f_bytes(1, cuboid_blob(*a)) for a in areas)
+    body += f_varint(2, level)
+    if uid:
+        body += f_bytes(4, uid.encode())
+    body += f_bytes(6, owner.encode())
+    if description:
+        body += f_bytes(7, description.encode())
+    return body + f_varint(12, 1)             # a permission flag
 
 
 def mapchunk_blob(rain, terrain, packed=True):
@@ -852,3 +876,65 @@ class TestPlayers:
     def test_read_players_empty(self, tmp_path):
         path = make_world(tmp_path / "w.vcdbs", w=1, h=1)
         assert read_players(path) == ([], 0)
+
+
+class TestLandClaims:
+    def _savegame(self, claims, field=27):
+        return (f_varint(1, 1024000) + f_varint(2, 256)
+                + f_bytes(11, f_bytes(1, b"temporalStormData") + f_bytes(2, b"x"))
+                + b"".join(f_bytes(field, c) for c in claims)
+                + f_bytes(13, b"World name")
+                + f_bytes(36, f_bytes(1, b"game:v1.22.0") + f_varint(2, 1)))
+
+    def test_parses_claims_like_a_real_save(self):
+        blob = self._savegame([
+            claim_blob([(512090, 109, 512018, 512109, 119, 512034)], level=10,
+                       uid="", owner="Trader", description="Trader Perimeter"),
+            # Corners in the order they were marked: z1 > z2.
+            claim_blob([(511975, 112, 512034, 512011, 120, 512011)],
+                       uid="5jAsQkt5Y", owner="Player Fighter199",
+                       description="fighter199"),
+        ])
+        trader, mine = parse_land_claims(blob)
+        assert trader.label == "Trader Perimeter"
+        assert trader.protection_level == 10 and trader.owner_uid == ""
+        assert mine.areas == [(511975, 112, 512011, 512011, 120, 512034)]
+        assert mine.owner_uid == "5jAsQkt5Y"
+        assert mine.owner_name == "Player Fighter199"
+        assert mine.label == "fighter199"
+
+    def test_zero_and_negative_coordinates(self):
+        blob = self._savegame([claim_blob([(-40, 0, -1, 31, 5, 0)],
+                                          description="")])
+        claim, = parse_land_claims(blob)
+        assert claim.areas == [(-40, 0, -1, 31, 5, 0)]
+        assert claim.label == "Player Alice"          # no description
+        # Chunks -2..0 in x (the far edge x=31 is still chunk 0), -1..0 in z.
+        assert claim.chunk_rects() == [(-2, -1, 0, 0)]
+        assert claim.chunk_rects(margin=2) == [(-4, -3, 2, 2)]
+
+    def test_several_areas(self):
+        blob = self._savegame([claim_blob([(0, 0, 0, 10, 10, 10),
+                                           (64, 0, 64, 100, 10, 100)])])
+        claim, = parse_land_claims(blob)
+        assert claim.chunk_rects() == [(0, 0, 0, 0), (2, 2, 3, 3)]
+
+    def test_found_under_another_field_number(self):
+        blob = self._savegame([claim_blob([(0, 0, 0, 32, 5, 32)])], field=40)
+        assert len(parse_land_claims(blob)) == 1
+
+    def test_no_claims(self):
+        assert parse_land_claims(self._savegame([])) == []
+        assert parse_land_claims(b"") == []
+
+    def test_read_world_meta_includes_claims(self, tmp_path):
+        path = make_world(tmp_path / "w.vcdbs", w=2, h=2)
+        conn = sqlite3.connect(path)
+        conn.execute("UPDATE gamedata SET data = ?", (self._savegame(
+            [claim_blob([(0, 0, 0, 40, 5, 40)], description="Base")]),))
+        conn.commit()
+        conn.close()
+        claims = read_world_meta(path)["claims"]
+        assert [c.label for c in claims] == ["Base"]
+        path2 = make_world(tmp_path / "plain.vcdbs", w=2, h=2)
+        assert read_world_meta(path2)["claims"] == []
