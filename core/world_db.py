@@ -37,6 +37,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import struct
 import time
 from array import array
 from bisect import bisect_left, bisect_right
@@ -554,6 +555,155 @@ def render_ppm(grid: HeightGrid, sea: int, map_size_y: int,
     return bytes(out)
 
 
+
+
+# ----------------------------------------------------------------------
+# Player positions (playerdata table)
+# ----------------------------------------------------------------------
+# playerdata.data is a protobuf ServerWorldPlayerData whose field 3 is
+# the player entity, written with .NET's BinaryWriter:
+#   string class ("EntityPlayer"), string game version, int64 entity id,
+#   TreeAttribute WatchedAttributes, double X, double Y, double Z, ...
+# Y is the "internal" Y: other dimensions are stacked 32768 blocks apart.
+PLAYERDATA_ENTITY_FIELD = 3
+DIMENSION_HEIGHT = 32768
+_TREE_MAX_DEPTH = 64
+_TREE_MAX_ARRAY = 10_000_000
+
+
+class _NetReader:
+    """Just enough of .NET BinaryReader for entity data."""
+
+    def __init__(self, buf: bytes):
+        self.buf = buf
+        self.pos = 0
+
+    def take(self, n: int) -> bytes:
+        if n < 0 or self.pos + n > len(self.buf):
+            raise ValueError("truncated entity data")
+        out = self.buf[self.pos:self.pos + n]
+        self.pos += n
+        return out
+
+    def u8(self) -> int:
+        return self.take(1)[0]
+
+    def i32(self) -> int:
+        return struct.unpack("<i", self.take(4))[0]
+
+    def string(self) -> str:
+        length = shift = 0
+        while True:                       # 7-bit encoded length prefix
+            b = self.u8()
+            length |= (b & 0x7F) << shift
+            if b < 0x80:
+                break
+            shift += 7
+            if shift > 35:
+                raise ValueError("bad string length")
+        return self.take(length).decode("utf-8", "replace")
+
+    def count(self) -> int:
+        n = self.i32()
+        if not 0 <= n <= _TREE_MAX_ARRAY:
+            raise ValueError(f"bad array length {n}")
+        return n
+
+
+def _read_tree(r: _NetReader, wanted: dict, path: str = "", depth: int = 0) -> None:
+    """Walk a serialized TreeAttribute, storing the string values whose
+    dotted key path is in `wanted` (a {path: None} dict)."""
+    if depth > _TREE_MAX_DEPTH:
+        raise ValueError("attribute tree too deep")
+    while True:
+        kind = r.u8()
+        if kind == 0:
+            return
+        key = path + r.string()
+        if kind in (1, 4):                    # int, float
+            r.take(4)
+        elif kind in (2, 3):                  # long, double
+            r.take(8)
+        elif kind == 5:                       # string
+            value = r.string()
+            if key in wanted:
+                wanted[key] = value
+        elif kind == 6:                       # tree
+            _read_tree(r, wanted, key + ".", depth + 1)
+        elif kind == 7:                       # itemstack
+            if not r.u8():                    # 0 = present
+                r.take(12)                    # class, id, stack size
+                _read_tree(r, {}, "", depth + 1)
+        elif kind == 8:                       # byte array (ushort length)
+            r.take(struct.unpack("<H", r.take(2))[0])
+        elif kind == 9:                       # bool
+            r.take(1)
+        elif kind == 10:                      # string array
+            for _ in range(r.count()):
+                r.string()
+        elif kind in (11, 12):                # int / float array
+            r.take(4 * r.count())
+        elif kind in (13, 15):                # double / long array
+            r.take(8 * r.count())
+        elif kind == 14:                      # tree array
+            for _ in range(r.count()):
+                _read_tree(r, {}, "", depth + 1)
+        elif kind == 16:                      # bool array
+            r.take(r.count())
+        else:
+            raise ValueError(f"unknown attribute type {kind} at byte {r.pos}")
+
+
+def parse_player_entity(blob: bytes) -> dict:
+    """{name, x, y, z, dimension, game_version} from EntityPlayer bytes.
+    Raises ValueError if the data doesn't look like a player entity."""
+    r = _NetReader(blob)
+    first = r.string()
+    if "entityplayer" in first.lower():
+        version = r.string()
+    elif re.match(r"\d+\.\d+", first):       # written without class name
+        version = first
+    else:
+        raise ValueError(f"not a player entity ({first[:40]!r})")
+    r.take(8)                                  # entity id
+    wanted = {"nametag.name": None}
+    _read_tree(r, wanted)
+    x, y, z = struct.unpack("<ddd", r.take(24))
+    if not all(abs(v) < 1e8 for v in (x, y, z)):   # also rejects NaN
+        raise ValueError("implausible player position")
+    dimension = int(y // DIMENSION_HEIGHT)
+    return {"name": wanted["nametag.name"], "x": x,
+            "y": y - dimension * DIMENSION_HEIGHT, "z": z,
+            "dimension": dimension, "game_version": version}
+
+
+def read_players(path: str) -> tuple[list[dict], int]:
+    """Last saved position of every player in the savegame.
+
+    Returns (players, unreadable) where each player is a dict with uid,
+    name (None if unknown), x, y, z (absolute block coordinates) and
+    dimension. Positions are as of the last save — online players move
+    on after that."""
+    players, unreadable = [], 0
+    conn = _open_for_read(path)
+    try:
+        rows = conn.execute("SELECT playeruid, data FROM playerdata").fetchall()
+    except sqlite3.Error:
+        return [], 0                           # older/odd schema: no players
+    finally:
+        conn.close()
+    for uid, data in rows:
+        try:
+            span = next(v for f, wire, v in iter_fields(data or b"")
+                        if f == PLAYERDATA_ENTITY_FIELD and wire == 2)
+            player = parse_player_entity(bytes(data[span[0]:span[1]]))
+        except (StopIteration, ValueError, struct.error):
+            unreadable += 1
+            continue
+        player["uid"] = uid
+        players.append(player)
+    players.sort(key=lambda p: (p["name"] or p["uid"] or "").lower())
+    return players, unreadable
 
 
 # ----------------------------------------------------------------------

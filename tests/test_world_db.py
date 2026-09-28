@@ -747,3 +747,108 @@ class TestRewriteSavegame:
         rewrite_savegame(path, ChunkSelection(), (0, 0, 29, 29),
                          progress=seen.append)
         assert seen[-1] == 1.0
+
+
+# ----------------------------------------------------------------------
+# Player positions
+# ----------------------------------------------------------------------
+import struct  # noqa: E402
+
+from core.world_db import parse_player_entity, read_players  # noqa: E402
+
+
+def net_str(s):
+    b = s.encode("utf-8")
+    n, out = len(b), bytearray()
+    while True:
+        if n < 0x80:
+            out.append(n)
+            break
+        out.append((n & 0x7F) | 0x80)
+        n >>= 7
+    return bytes(out) + b
+
+
+def attr(kind, key, payload=b""):
+    return bytes([kind]) + net_str(key) + payload
+
+
+def every_attribute_type():
+    """A WatchedAttributes tree using each serialized attribute type."""
+    stack = b"\x00" + struct.pack("<iii", 1, 42, 3) + attr(1, "q", struct.pack("<i", 1)) + b"\x00"
+    tree_arr = struct.pack("<i", 2) + attr(9, "b", b"\x01") + b"\x00" + b"\x00"
+    return b"".join([
+        attr(6, "animations", b"\x00"),
+        attr(1, "int", struct.pack("<i", 7)),
+        attr(2, "long", struct.pack("<q", 7)),
+        attr(3, "double", struct.pack("<d", 1.5)),
+        attr(4, "float", struct.pack("<f", 1.5)),
+        attr(5, "text", net_str("x" * 200)),          # 2-byte length prefix
+        attr(6, "nametag", attr(5, "name", net_str("Ünïcode_Player"))
+             + attr(9, "showtagonlywhentargeted", b"\x00") + b"\x00"),
+        attr(7, "held", stack),
+        attr(7, "empty", b"\x01"),
+        attr(8, "bytes", struct.pack("<H", 3) + b"abc"),
+        attr(9, "bool", b"\x01"),
+        attr(10, "strings", struct.pack("<i", 2) + net_str("a") + net_str("bc")),
+        attr(11, "ints", struct.pack("<i", 2) + b"\x00" * 8),
+        attr(12, "floats", struct.pack("<i", 1) + b"\x00" * 4),
+        attr(13, "doubles", struct.pack("<i", 1) + b"\x00" * 8),
+        attr(14, "trees", tree_arr),
+        attr(15, "longs", struct.pack("<i", 1) + b"\x00" * 8),
+        attr(16, "bools", struct.pack("<i", 3) + b"\x01\x00\x01"),
+    ]) + b"\x00"
+
+
+def entity_blob(x, y, z, tree=None, with_class=True):
+    head = (net_str("EntityPlayer") if with_class else b"") + net_str("1.22.2")
+    body = struct.pack("<q", 25) + (every_attribute_type() if tree is None else tree)
+    return head + body + struct.pack("<ddd", x, y, z) + b"trailing entity data"
+
+
+class TestPlayers:
+    def test_parse_entity_every_attribute_type(self):
+        p = parse_player_entity(entity_blob(511975.5, 112.0, 512034.5))
+        assert p == {"name": "Ünïcode_Player", "x": 511975.5, "y": 112.0,
+                     "z": 512034.5, "dimension": 0, "game_version": "1.22.2"}
+
+    def test_parse_entity_without_class_prefix(self):
+        p = parse_player_entity(entity_blob(1.0, 2.0, 3.0, with_class=False))
+        assert (p["x"], p["y"], p["z"]) == (1.0, 2.0, 3.0)
+
+    def test_other_dimension(self):
+        p = parse_player_entity(entity_blob(10.0, 2 * 32768 + 90.0, 20.0))
+        assert p["dimension"] == 2 and p["y"] == 90.0
+
+    def test_no_nametag(self):
+        p = parse_player_entity(entity_blob(1.0, 2.0, 3.0, tree=b"\x00"))
+        assert p["name"] is None
+
+    def test_rejects_garbage(self):
+        for bad in (b"", net_str("Chicken") + b"\x00" * 40,
+                    entity_blob(1, 2, 3)[:30],
+                    entity_blob(1, 2, 3, tree=attr(99, "x") + b"\x00"),
+                    entity_blob(float("nan"), 2, 3)):
+            with pytest.raises(ValueError):
+                parse_player_entity(bad)
+
+    def test_read_players(self, tmp_path):
+        path = make_world(tmp_path / "w.vcdbs", w=2, h=2)
+        conn = sqlite3.connect(path)
+        good = f_bytes(1, b"uid-a") + f_bytes(3, entity_blob(512001.0, 120.0, 511990.0))
+        nameless = f_bytes(1, b"uid-b") + f_bytes(3, entity_blob(5.0, 6.0, 7.0, tree=b"\x00"))
+        broken = f_bytes(1, b"uid-c") + f_bytes(3, b"\x05junk")
+        for uid, data in (("uid-a", good), ("uid-b", nameless), ("uid-c", broken)):
+            conn.execute("INSERT INTO playerdata (playeruid, data) VALUES (?, ?)",
+                         (uid, data))
+        conn.commit()
+        conn.close()
+        players, unreadable = read_players(path)
+        assert unreadable == 1
+        assert [(p["uid"], p["name"]) for p in players] == [
+            ("uid-b", None), ("uid-a", "Ünïcode_Player")]
+        assert (players[1]["x"], players[1]["z"]) == (512001.0, 511990.0)
+
+    def test_read_players_empty(self, tmp_path):
+        path = make_world(tmp_path / "w.vcdbs", w=1, h=1)
+        assert read_players(path) == ([], 0)

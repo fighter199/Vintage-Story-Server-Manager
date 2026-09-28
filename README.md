@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.2**
+Current version: **3.3**
 
 ## Feature highlights
 
@@ -73,11 +73,19 @@ python run_tests.py               # full test suite, no pytest needed
 First launch creates `vserverman_settings.json`, a `logs/` folder, and
 (per profile) `chat_log_<profile>.json` next to `VSSM.py`.
 
-To package a release (runtime files only — no test suite, test runner
-or caches):
+### Branches
+
+- **`Main`** — the current release: only the files VSSM needs to run
+  (no test suite, test runner or caches). Download or clone this one.
+- **Development branch** — the full source, including `tests/`,
+  `run_tests.py` and `make_release.py`. New work lands here first.
+
+To package a release from the development branch:
 
 ```bash
-python make_release.py            # → Release/VSSM-<version>/ and Release/VSSM-<version>.zip
+python make_release.py                 # → Release/VSSM-<version>/ and .zip
+python make_release.py --publish Main  # …and commit it to Main
+git push origin Main
 ```
 
 ## Module layout
@@ -314,6 +322,13 @@ The status bar shows in-game coordinates (relative to the map
 centre), chunk and region under the cursor, surface height, and the
 selection's size with an estimate of how much of the file it is.
 
+**Players** are shown as cyan markers with their names, at their last
+*saved* position (the server saves when a player logs out and on every
+autosave, so online players may have moved on). Hover a marker for its
+height, use *Go to player…* to jump to someone, or untick *Players* to
+hide them. Deleting an area that a player logged out in shows a warning
+naming them first.
+
 **🗑 Delete selected…** removes the selected chunk columns (their map
 chunk plus every chunk above it, dimension 0 only); the server
 regenerates them from the world seed when a player next goes there.
@@ -412,6 +427,12 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.3 (September 2026)
+
+- **Player locations on the world map** — markers and names at each
+  player's last saved position, a *Go to player…* picker, and a warning
+  before deleting chunks a player logged out in.
 
 ### v3.2 (September 2026)
 
