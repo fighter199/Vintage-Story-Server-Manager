@@ -78,6 +78,7 @@ from ui.widgets import (TermButton, TermEntry, TabStrip, retheme_tree,
                          Sparkline, ScrollableFrame, themed_frame,
                          panel_header, ToastQueue)
 from ui.tab_custom_commands import CustomCommandsTab
+import ui.tab_mods as _tab_mods
 from ui.tab_chat_log import ChatLogTab
 from core.chat_log import (ChatLogStore, parse_chat_with_group,
                             parse_ungrouped_chat, UNGROUPED_KEY)
@@ -3831,196 +3832,9 @@ class ServerManagerApp(tk.Tk):
             pass
 
     # ==================================================================
-    # Mods tab — full implementation ported from v2
+    # Mods tab — the code lives in ui/tab_mods.py; its functions are
+    # attached as methods below the class (_MODS_TAB_METHODS).
     # ==================================================================
-    def _build_mods_tab(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_tab as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_installed_subtab(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_installed_subtab as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_browse_subtab(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_browse_subtab as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_browse_left(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_browse_left as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _build_mods_browse_right(self, *args, **kwargs):
-        from ui.tab_mods import _build_mods_browse_right as _impl
-        return _impl(self, *args, **kwargs)
-
-    def load_mods(self):
-        from ui.tab_mods import load_mods as _impl
-        return _impl(self)
-
-    def _selected_mod(self):
-        from ui.tab_mods import _selected_mod as _impl
-        return _impl(self)
-
-    def enable_selected_mod(self):
-        from ui.tab_mods import enable_selected_mod as _impl
-        return _impl(self)
-
-    def disable_selected_mod(self):
-        from ui.tab_mods import disable_selected_mod as _impl
-        return _impl(self)
-
-    def add_mod(self):
-        from ui.tab_mods import add_mod as _impl
-        return _impl(self)
-
-    def remove_selected_mod(self):
-        from ui.tab_mods import remove_selected_mod as _impl
-        return _impl(self)
-
-    def open_selected_mod_on_moddb(self):
-        from ui.tab_mods import open_selected_mod_on_moddb as _impl
-        return _impl(self)
-
-    def _open_moddb_worker(self, *args, **kwargs):
-        from ui.tab_mods import _open_moddb_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _open_url_in_browser(self, *args, **kwargs):
-        from ui.tab_mods import _open_url_in_browser as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _mod_op_ok(self, *args, **kwargs):
-        from ui.tab_mods import _mod_op_ok as _impl
-        return _impl(self, *args, **kwargs)
-
-    def init_moddb_catalogs_async(self):
-        from ui.tab_mods import init_moddb_catalogs_async as _impl
-        return _impl(self)
-
-    def _moddb_catalogs_worker(self):
-        from ui.tab_mods import _moddb_catalogs_worker as _impl
-        return _impl(self)
-
-    def _moddb_apply_catalogs(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_apply_catalogs as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _toggle_moddb_tag(self, *args, **kwargs):
-        from ui.tab_mods import _toggle_moddb_tag as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _refresh_tag_button_styles(self):
-        from ui.tab_mods import _refresh_tag_button_styles as _impl
-        return _impl(self)
-
-    def _clear_moddb_tags(self):
-        from ui.tab_mods import _clear_moddb_tags as _impl
-        return _impl(self)
-
-    def _schedule_moddb_search(self, *args, **kwargs):
-        from ui.tab_mods import _schedule_moddb_search as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _run_moddb_search(self):
-        from ui.tab_mods import _run_moddb_search as _impl
-        return _impl(self)
-
-    def _moddb_search_worker(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_search_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _moddb_apply_search(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_apply_search as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _rerender_moddb_results(self):
-        from ui.tab_mods import _rerender_moddb_results as _impl
-        return _impl(self)
-
-    def _on_moddb_row_click(self, *args, **kwargs):
-        from ui.tab_mods import _on_moddb_row_click as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _load_mod_details_async(self, *args, **kwargs):
-        from ui.tab_mods import _load_mod_details_async as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _mod_detail_worker(self, *args, **kwargs):
-        from ui.tab_mods import _mod_detail_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _apply_mod_detail(self, *args, **kwargs):
-        from ui.tab_mods import _apply_mod_detail as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _render_mod_detail(self, *args, **kwargs):
-        from ui.tab_mods import _render_mod_detail as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _render_mod_files(self, *args, **kwargs):
-        from ui.tab_mods import _render_mod_files as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _pick_best_release(self, *args, **kwargs):
-        from ui.tab_mods import _pick_best_release as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _select_file_row(self, *args, **kwargs):
-        from ui.tab_mods import _select_file_row as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _on_moddb_file_click(self, *args, **kwargs):
-        from ui.tab_mods import _on_moddb_file_click as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _install_current_file(self):
-        from ui.tab_mods import _install_current_file as _impl
-        return _impl(self)
-
-    def _cancel_moddb_download(self):
-        from ui.tab_mods import _cancel_moddb_download as _impl
-        return _impl(self)
-
-    def _moddb_download_worker(self, *args, **kwargs):
-        from ui.tab_mods import _moddb_download_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _finalize_moddb_download(self, *args, **kwargs):
-        from ui.tab_mods import _finalize_moddb_download as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _set_moddb_progress(self, *args, **kwargs):
-        from ui.tab_mods import _set_moddb_progress as _impl
-        return _impl(self, *args, **kwargs)
-
-    def check_mod_updates(self):
-        from ui.tab_mods import check_mod_updates as _impl
-        return _impl(self)
-
-    def _update_check_worker(self, *args, **kwargs):
-        from ui.tab_mods import _update_check_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _show_update_report(self, *args, **kwargs):
-        from ui.tab_mods import _show_update_report as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _bulk_update(self, *args, **kwargs):
-        from ui.tab_mods import _bulk_update as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _bulk_update_worker(self, *args, **kwargs):
-        from ui.tab_mods import _bulk_update_worker as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _finalize_bulk_update(self, *args, **kwargs):
-        from ui.tab_mods import _finalize_bulk_update as _impl
-        return _impl(self, *args, **kwargs)
-
-    def _set_moddb_status(self, *args, **kwargs):
-        from ui.tab_mods import _set_moddb_status as _impl
-        return _impl(self, *args, **kwargs)
-
     def _normalize_side(self, raw):
         """Fold any representation of the 'side' field to one of:
         'server', 'client', 'universal', 'unknown'."""
@@ -4052,9 +3866,64 @@ class ServerManagerApp(tk.Tk):
         # imports and drop the method entirely.
         return fmt_size(n)
 
-    def _open_current_mod_in_browser(self):
-        from ui.tab_mods import _open_current_mod_in_browser as _impl
-        return _impl(self)
+
+# The mods tab is implemented in ui/tab_mods.py as functions taking the
+# app as their first argument. The rest of the app — and those functions
+# themselves — call them as app.<name>(...), so they're attached to the
+# class as methods.
+_MODS_TAB_METHODS = (
+    "_build_mods_tab",
+    "_build_mods_installed_subtab",
+    "_build_mods_browse_subtab",
+    "_build_mods_browse_left",
+    "_build_mods_browse_right",
+    "load_mods",
+    "_selected_mod",
+    "enable_selected_mod",
+    "disable_selected_mod",
+    "add_mod",
+    "remove_selected_mod",
+    "open_selected_mod_on_moddb",
+    "_open_moddb_worker",
+    "_open_url_in_browser",
+    "_mod_op_ok",
+    "init_moddb_catalogs_async",
+    "_moddb_catalogs_worker",
+    "_moddb_apply_catalogs",
+    "_toggle_moddb_tag",
+    "_refresh_tag_button_styles",
+    "_clear_moddb_tags",
+    "_schedule_moddb_search",
+    "_run_moddb_search",
+    "_moddb_search_worker",
+    "_moddb_apply_search",
+    "_rerender_moddb_results",
+    "_on_moddb_row_click",
+    "_load_mod_details_async",
+    "_mod_detail_worker",
+    "_apply_mod_detail",
+    "_render_mod_detail",
+    "_render_mod_files",
+    "_pick_best_release",
+    "_select_file_row",
+    "_on_moddb_file_click",
+    "_install_current_file",
+    "_cancel_moddb_download",
+    "_moddb_download_worker",
+    "_finalize_moddb_download",
+    "_set_moddb_progress",
+    "check_mod_updates",
+    "_update_check_worker",
+    "_show_update_report",
+    "_bulk_update",
+    "_bulk_update_worker",
+    "_finalize_bulk_update",
+    "_set_moddb_status",
+    "_open_current_mod_in_browser",
+)
+for _name in _MODS_TAB_METHODS:
+    setattr(ServerManagerApp, _name, getattr(_tab_mods, _name))
+del _name
 
 
 # ======================================================================
