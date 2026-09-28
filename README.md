@@ -317,6 +317,8 @@ takes 42 s), a full-detail tile 1–5 s, under 30 MB of RAM.
 | All / Invert / Clear     | selection shortcuts                      |
 | Keep centre…             | select everything except a square around |
 |                          | the map centre (in-game 0, 0)            |
+| Keep near players…       | select everything except a square around |
+|                          | every player (combines with Keep centre) |
 
 The status bar shows in-game coordinates (relative to the map
 centre), chunk and region under the cursor, surface height, and the

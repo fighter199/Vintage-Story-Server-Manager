@@ -276,6 +276,8 @@ class WorldMapWindow(tk.Toplevel):
             TermButton(bar, "Invert", self._invert, **small),
             TermButton(bar, "Clear", self._clear_selection, **small),
             TermButton(bar, "Keep centre…", self._keep_centre, **small),
+            TermButton(bar, "Keep near players…", self._keep_near_players,
+                       **small),
         ]
         view_buttons = [
             TermButton(bar, "−", lambda: self._zoom_step(-1), **small),
@@ -952,6 +954,37 @@ class WorldMapWindow(tk.Toplevel):
         self._sel.clear()
         self._sel.base_all = True
         self._sel.subtract(mcx - r, mcz - r, mcx + r - 1, mcz + r - 1)
+        self._refresh_selection()
+
+    def _keep_near_players(self) -> None:
+        if self._base.grid is None:
+            return
+        players = [p for p in self._players if p.get("dimension", 0) == 0]
+        if not players:
+            messagebox.showinfo("Keep near players",
+                                "No player positions are saved in this "
+                                "savegame.", parent=self)
+            return
+        combine = not self._sel.is_empty()
+        radius = simpledialog.askinteger(
+            "Keep near players",
+            f"Keep a square around each of the {len(players)} players' last "
+            "saved positions; everything else gets selected"
+            + (" (added to what the current selection already keeps)."
+               if combine else ".")
+            + "\n\nHow many blocks around each player should be kept?",
+            parent=self, initialvalue=1000, minvalue=0, maxvalue=1_000_000)
+        if radius is None:
+            return
+        r = -(-radius // CHUNK_SIZE)
+        if not combine:
+            self._sel.clear()
+            self._sel.base_all = True
+        for p in players:
+            cx = math.floor(p["x"] / CHUNK_SIZE)
+            cz = math.floor(p["z"] / CHUNK_SIZE)
+            self._sel.subtract(cx - r, cz - r, cx + r, cz + r)
+        self._players_var.set(True)
         self._refresh_selection()
 
     def _count_selection(self) -> tuple[int, int, bool]:
