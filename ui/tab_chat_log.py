@@ -17,7 +17,7 @@ from datetime import datetime
 from tkinter import simpledialog, messagebox, ttk
 
 from .theme import Theme
-from .widgets import TermButton, auto_wrap, panel_header
+from .widgets import TermButton, auto_wrap, flow_children, panel_header
 
 
 class ChatLogTab:
@@ -116,6 +116,7 @@ class ChatLogTab:
         tk.Label(toolbar, textvariable=self._status_var,
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=self._app.F_SMALL).pack(side=tk.RIGHT, padx=8)
+        flow_children(toolbar, spacing=4)
 
         # Nested notebook for the subtabs
         self._notebook = ttk.Notebook(outer, style="Term.TNotebook")
@@ -165,7 +166,7 @@ class ChatLogTab:
         sb = ttk.Scrollbar(inner, orient=tk.VERTICAL,
                             style="Term.Vertical.TScrollbar",
                             command=text.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        sb.pack(side=tk.RIGHT, fill=tk.Y, before=text)
         text.configure(yscrollcommand=sb.set)
         # Tags for visual differentiation. Player name in glow,
         # group prefix (in All view) dimmed.

@@ -187,7 +187,7 @@ class AutorunTab:
         lsb = ttk.Scrollbar(list_inner, orient=tk.VERTICAL,
                              style="Term.Vertical.TScrollbar",
                              command=self._listbox.yview)
-        lsb.pack(side=tk.RIGHT, fill=tk.Y)
+        lsb.pack(side=tk.RIGHT, fill=tk.Y, before=self._listbox)
         self._listbox.configure(yscrollcommand=lsb.set)
         self._listbox.bind("<<ListboxSelect>>", self._on_list_select)
 
@@ -291,7 +291,7 @@ class AutorunTab:
         cmd_sb = ttk.Scrollbar(cmd_inner, orient=tk.VERTICAL,
                                 style="Term.Vertical.TScrollbar",
                                 command=self._cmd_text.yview)
-        cmd_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        cmd_sb.pack(side=tk.RIGHT, fill=tk.Y, before=self._cmd_text)
         self._cmd_text.configure(yscrollcommand=cmd_sb.set)
 
         # Status line + buttons

@@ -189,7 +189,7 @@ class CustomCommandsTab:
         lsb = ttk.Scrollbar(list_inner, orient=tk.VERTICAL,
                              style="Term.Vertical.TScrollbar",
                              command=self._listbox.yview)
-        lsb.pack(side=tk.RIGHT, fill=tk.Y)
+        lsb.pack(side=tk.RIGHT, fill=tk.Y, before=self._listbox)
         self._listbox.configure(yscrollcommand=lsb.set)
         self._listbox.bind("<<ListboxSelect>>", self._on_list_select)
 
@@ -213,10 +213,11 @@ class CustomCommandsTab:
                         ).pack(anchor=tk.W, padx=pad, pady=(8, 2))
 
         # ── Trigger ─────────────────────────────────────────────────────
-        tk.Label(body, text="TRIGGER  (what the player types in chat):",
-                 fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
-                 font=self._app.F_SMALL).pack(anchor=tk.W, padx=pad,
-                                              pady=(6, 1))
+        auto_wrap(tk.Label(body,
+                           text="TRIGGER  (what the player types in chat):",
+                           fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
+                           font=self._app.F_SMALL)
+                  ).pack(anchor=tk.W, fill=tk.X, padx=pad, pady=(6, 1))
         self._trigger_var = tk.StringVar()
         self._trigger_var.trace_add("write",
                                      lambda *_: self._on_field_change())
@@ -233,10 +234,10 @@ class CustomCommandsTab:
         auto_wrap(body.winfo_children()[-1])
 
         # ── Roles ───────────────────────────────────────────────────────
-        tk.Label(body, text="ALLOWED ROLES  (blank = any role):",
-                 fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
-                 font=self._app.F_SMALL).pack(anchor=tk.W, padx=pad,
-                                              pady=(4, 1))
+        auto_wrap(tk.Label(body, text="ALLOWED ROLES  (blank = any role):",
+                           fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
+                           font=self._app.F_SMALL)
+                  ).pack(anchor=tk.W, fill=tk.X, padx=pad, pady=(4, 1))
         roles_chip_frame = tk.Frame(body, bg=Theme.BG_PANEL)
         roles_chip_frame.pack(fill=tk.X, padx=pad, pady=(0, 2))
         self._role_vars: dict[str, tk.BooleanVar] = {}
@@ -254,10 +255,11 @@ class CustomCommandsTab:
                 command=self._on_field_change,
             )
             cb.pack(side=tk.LEFT, padx=2)
-        tk.Label(body, text="EXTRA ROLES  (comma-separated):",
-                 fg=Theme.MUTED, bg=Theme.BG_PANEL,
-                 font=self._app.F_SMALL).pack(anchor=tk.W, padx=pad,
-                                              pady=(4, 1))
+        flow_children(roles_chip_frame, spacing=4)
+        auto_wrap(tk.Label(body, text="EXTRA ROLES  (comma-separated):",
+                           fg=Theme.MUTED, bg=Theme.BG_PANEL,
+                           font=self._app.F_SMALL)
+                  ).pack(anchor=tk.W, fill=tk.X, padx=pad, pady=(4, 1))
         self._extra_roles_var = tk.StringVar()
         self._extra_roles_var.trace_add("write",
                                          lambda *_: self._on_field_change())
@@ -280,13 +282,14 @@ class CustomCommandsTab:
         tk.Label(cd_row, text="(per player, per rule)",
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=self._app.F_SMALL).pack(side=tk.LEFT)
+        flow_children(cd_row, spacing=8)
 
         # ── Response ────────────────────────────────────────────────────
-        tk.Label(body,
-                 text="RESPONSE  (one console command per line):",
-                 fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
-                 font=self._app.F_SMALL).pack(anchor=tk.W, padx=pad,
-                                              pady=(8, 1))
+        auto_wrap(tk.Label(body,
+                           text="RESPONSE  (one console command per line):",
+                           fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
+                           font=self._app.F_SMALL)
+                  ).pack(anchor=tk.W, fill=tk.X, padx=pad, pady=(8, 1))
         resp_wrap = tk.Frame(body, bg=Theme.BORDER)
         resp_wrap.pack(fill=tk.X, padx=pad, pady=(0, 4))
         resp_inner = tk.Frame(resp_wrap, bg=Theme.BG_INPUT)
@@ -301,20 +304,20 @@ class CustomCommandsTab:
         rsb = ttk.Scrollbar(resp_inner, orient=tk.VERTICAL,
                              style="Term.Vertical.TScrollbar",
                              command=self._response_text.yview)
-        rsb.pack(side=tk.RIGHT, fill=tk.Y)
+        rsb.pack(side=tk.RIGHT, fill=tk.Y, before=self._response_text)
         self._response_text.configure(yscrollcommand=rsb.set)
         self._response_text.bind("<<Modified>>", self._on_text_modified)
 
         # ── Destructive opt-in ──────────────────────────────────────────
         self._destructive_var = tk.BooleanVar(value=False)
-        TermCheckbutton(
+        auto_wrap(TermCheckbutton(
             body,
             "I understand this rule contains a destructive command "
             "(/stop, /ban, /op, …) and want to allow it",
             self._destructive_var,
             font_spec=self._app.F_SMALL,
             command=self._on_field_change,
-        ).pack(anchor=tk.W, padx=pad, pady=(2, 4))
+        )).pack(anchor=tk.W, fill=tk.X, padx=pad, pady=(2, 4))
 
         # ── Save / Discard / Test ───────────────────────────────────────
         btn_row = tk.Frame(body, bg=Theme.BG_PANEL)
@@ -325,6 +328,7 @@ class CustomCommandsTab:
         TermButton(btn_row, "↺ Discard", self._on_discard,
                    variant="amber", font_spec=self._app.F_SMALL,
                    padx=10, pady=4).pack(side=tk.LEFT)
+        flow_children(btn_row, spacing=4)
 
         # ── Live test panel ─────────────────────────────────────────────
         _, test_body = collapsible_section(
@@ -396,7 +400,7 @@ class CustomCommandsTab:
         asb = ttk.Scrollbar(inner, orient=tk.VERTICAL,
                              style="Term.Vertical.TScrollbar",
                              command=self._audit_text.yview)
-        asb.pack(side=tk.RIGHT, fill=tk.Y)
+        asb.pack(side=tk.RIGHT, fill=tk.Y, before=self._audit_text)
         self._audit_text.configure(yscrollcommand=asb.set)
         # Tag colours
         self._audit_text.tag_configure("fired",   foreground=Theme.AMBER_GLOW)

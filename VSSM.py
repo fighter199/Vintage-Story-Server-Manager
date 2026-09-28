@@ -964,7 +964,7 @@ class ServerManagerApp(tk.Tk):
         sb = ttk.Scrollbar(console_inner, orient=tk.VERTICAL,
                            style="Term.Vertical.TScrollbar",
                            command=self.console_text.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        sb.pack(side=tk.RIGHT, fill=tk.Y, before=self.console_text)
         self.console_text.configure(yscrollcommand=sb.set)
         c = self.console_text
         c.tag_configure("info",      foreground=Theme.AMBER)

@@ -227,7 +227,7 @@ def _build_mods_installed_subtab(app: 'ServerManagerApp', parent):
     msb = ttk.Scrollbar(list_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.mod_listbox.yview)
-    msb.pack(side=tk.RIGHT, fill=tk.Y)
+    msb.pack(side=tk.RIGHT, fill=tk.Y, before=app.mod_listbox)
     app.mod_listbox.configure(yscrollcommand=msb.set)
 
 # ------------------------------------------------------------------
@@ -391,7 +391,7 @@ def _build_mods_browse_left(app: 'ServerManagerApp', parent):
     rsb = ttk.Scrollbar(res_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.moddb_results_text.yview)
-    rsb.pack(side=tk.RIGHT, fill=tk.Y)
+    rsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.moddb_results_text)
     app.moddb_results_text.configure(yscrollcommand=rsb.set)
 
     t = app.moddb_results_text
@@ -501,7 +501,7 @@ def _build_mods_browse_right(app: 'ServerManagerApp', parent):
     dsb = ttk.Scrollbar(det_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.moddb_details_text.yview)
-    dsb.pack(side=tk.RIGHT, fill=tk.Y)
+    dsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.moddb_details_text)
     app.moddb_details_text.configure(yscrollcommand=dsb.set)
     d = app.moddb_details_text
     d.tag_configure("title", foreground=Theme.CYAN, font=app.F_HDR)
@@ -535,7 +535,7 @@ def _build_mods_browse_right(app: 'ServerManagerApp', parent):
     fsb = ttk.Scrollbar(file_inner, orient=tk.VERTICAL,
                         style="Term.Vertical.TScrollbar",
                         command=app.moddb_files_text.yview)
-    fsb.pack(side=tk.RIGHT, fill=tk.Y)
+    fsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.moddb_files_text)
     app.moddb_files_text.configure(yscrollcommand=fsb.set)
 
     ft = app.moddb_files_text

@@ -31,3 +31,17 @@ jobs:
           python-version: "3.13"
       - run: pip install ruff==0.15.8
       - run: ruff check .
+
+  ui-smoke:
+    # Boots the real UI on a virtual display and fails if any tab's
+    # widgets are cut off (at 100 % and 130 % text) or the world map
+    # can't open a small synthetic savegame. See tests/ui_smoke.py.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: sudo apt-get update && sudo apt-get install -y xvfb fonts-dejavu-core
+      - name: UI smoke test
+        run: xvfb-run -a -s "-screen 0 1600x900x24" python tests/ui_smoke.py

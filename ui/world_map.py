@@ -76,6 +76,12 @@ class WorldMapTab:
 
         row = tk.Frame(pad, bg=Theme.BG_PANEL)
         row.pack(fill=tk.X, pady=(10, 0))
+        # Buttons are packed first so the combobox is what shrinks.
+        TermButton(row, "Browse…", self._browse, variant="amber",
+                   font_spec=app.F_SMALL, padx=8, pady=3
+                   ).pack(side=tk.RIGHT, padx=(6, 0))
+        TermButton(row, "↻", self.refresh_saves, variant="amber",
+                   font_spec=app.F_SMALL, padx=8, pady=3).pack(side=tk.RIGHT)
         tk.Label(row, text="Savegame:", fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
                  font=app.F_NORMAL).pack(side=tk.LEFT)
         self._combo = ttk.Combobox(row, textvariable=self._save_var,
@@ -83,11 +89,6 @@ class WorldMapTab:
                                    font=app.F_NORMAL)
         self._combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         self._combo.bind("<<ComboboxSelected>>", lambda _e: self._update_info())
-        TermButton(row, "↻", self.refresh_saves, variant="amber",
-                   font_spec=app.F_SMALL, padx=8, pady=3).pack(side=tk.LEFT)
-        TermButton(row, "Browse…", self._browse, variant="amber",
-                   font_spec=app.F_SMALL, padx=8, pady=3
-                   ).pack(side=tk.LEFT, padx=(6, 0))
 
         info_lbl = tk.Label(pad, textvariable=self._info_var, fg=Theme.MUTED,
                             bg=Theme.BG_PANEL, font=app.F_SMALL, anchor=tk.W,

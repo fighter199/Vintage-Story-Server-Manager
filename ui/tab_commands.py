@@ -90,7 +90,7 @@ def build_commands_tab(parent, app):
     tsb = ttk.Scrollbar(tree_inner, orient=tk.VERTICAL,
                          style="Term.Vertical.TScrollbar",
                          command=app.cmd_tree.yview)
-    tsb.pack(side=tk.RIGHT, fill=tk.Y)
+    tsb.pack(side=tk.RIGHT, fill=tk.Y, before=app.cmd_tree)
     app.cmd_tree.configure(yscrollcommand=tsb.set)
     app.cmd_tree.tag_configure("category",
                                 foreground=Theme.AMBER_GLOW,

@@ -141,18 +141,18 @@ def build_settings_tab(parent, app):
     #   * restart  → wraps restart_server() with a confirm dialog
     #   * scheduled→ wraps _cron_fire() to delay until the server's empty
     #   * shutdown → wraps stop_server() with a confirm dialog
-    TermCheckbutton(pad, "Check for players before manual restart",
-                    app.check_players_before_restart_var,
-                    font_spec=app.F_NORMAL
-                    ).pack(anchor=tk.W, padx=10, pady=(6, 0))
-    TermCheckbutton(pad, "Check for players before scheduled restart",
-                    app.check_players_before_scheduled_restart_var,
-                    font_spec=app.F_NORMAL
-                    ).pack(anchor=tk.W, padx=10, pady=(6, 0))
-    TermCheckbutton(pad, "Check for players before manual shutdown",
-                    app.check_players_before_shutdown_var,
-                    font_spec=app.F_NORMAL
-                    ).pack(anchor=tk.W, padx=10, pady=(6, 0))
+    auto_wrap(TermCheckbutton(pad, "Check for players before manual restart",
+                              app.check_players_before_restart_var,
+                              font_spec=app.F_NORMAL)
+              ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(6, 0))
+    auto_wrap(TermCheckbutton(pad, "Check for players before scheduled restart",
+                              app.check_players_before_scheduled_restart_var,
+                              font_spec=app.F_NORMAL)
+              ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(6, 0))
+    auto_wrap(TermCheckbutton(pad, "Check for players before manual shutdown",
+                              app.check_players_before_shutdown_var,
+                              font_spec=app.F_NORMAL)
+              ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(6, 0))
 
     tk.Label(
         pad,
@@ -229,6 +229,7 @@ def build_settings_tab(parent, app):
                        activebackground=Theme.BG_PANEL,
                        selectcolor=Theme.BG_INPUT,
                        font=app.F_SMALL).pack(side=tk.LEFT, padx=4)
+    flow_children(theme_row, spacing=4)
 
     # Log housekeeping
     log_row = tk.Frame(pad, bg=Theme.BG_PANEL)
@@ -244,6 +245,7 @@ def build_settings_tab(parent, app):
                app.clear_old_logs,
                variant="stop", font_spec=app.F_SMALL,
                padx=8, pady=2).pack(side=tk.LEFT, padx=(4, 0))
+    flow_children(log_row)
     tk.Label(pad,
              text=("Removes everything in the logs/ folder except the two "
                    "currently-active log files. Useful after running the app "

@@ -261,7 +261,9 @@ class ScrollableFrame(tk.Frame):
             return
         needs_bar = (top > 0.0) or (bottom < 1.0)
         if needs_bar and not self._sb_packed:
-            self._sb.pack(side=tk.RIGHT, fill=tk.Y)
+            # before= so the bar keeps its room in a narrow panel
+            # instead of the canvas taking all of it.
+            self._sb.pack(side=tk.RIGHT, fill=tk.Y, before=self._canvas)
             self._sb_packed = True
         elif not needs_bar and self._sb_packed:
             self._sb.pack_forget()
@@ -417,18 +419,34 @@ def flow_children(container, spacing=6, pady_between=4):
                     spacing=spacing, pady_between=pady_between)
 
 
+_WRAPPED: list = []            # (label, refit) for reflow_all()
+
+
 def auto_wrap(label, minimum=120):
-    """Wrap a label's text to the width it's actually given rather than
-    a fixed wraplength (which clips in narrow panels). Pack it with
-    fill=tk.X so it follows its parent's width. Returns the label."""
+    """Wrap a label's (or check/radio button's) text to the width it's
+    actually given rather than a fixed wraplength (which clips in narrow
+    panels). Pack it with fill=tk.X so it follows its parent's width.
+    Returns the label."""
     label.configure(anchor=tk.W, justify=tk.LEFT)
 
-    def _fit(event):
-        width = max(minimum, event.width - 4)
+    def _fit(given):
+        if given <= 1:
+            return
+        width = max(minimum, given - 4)
         if int(label.cget("wraplength")) != width:
             label.configure(wraplength=width)
+        # Padding and a check/radio indicator sit beside the text, so
+        # take whatever still sticks out off the wrap length too (more
+        # than once when the text only just fitted the first length).
+        for _ in range(4):
+            over = label.winfo_reqwidth() - given
+            if over <= 0 or width <= minimum:
+                break
+            width = max(minimum, width - over)
+            label.configure(wraplength=width)
 
-    label.bind("<Configure>", _fit, add="+")
+    label.bind("<Configure>", lambda e: _fit(e.width), add="+")
+    _WRAPPED.append((label, lambda: _fit(label.winfo_width())))
     return label
 
 
@@ -445,6 +463,18 @@ def reflow_all() -> None:
         reflow()
         alive.append((container, reflow))
     _FLOW_ROWS[:] = alive
+    # A new font size changes what a wrapped label needs but not the
+    # width it's given, so it gets no <Configure> either.
+    wrapped = []
+    for label, refit in _WRAPPED:
+        try:
+            if not label.winfo_exists():
+                continue
+            refit()
+        except tk.TclError:
+            continue
+        wrapped.append((label, refit))
+    _WRAPPED[:] = wrapped
 
 
 # -----------------------------------------------------------------------

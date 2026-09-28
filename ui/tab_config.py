@@ -36,5 +36,5 @@ def build_config_tab(parent, app):
     csb = ttk.Scrollbar(cfg_inner, orient=tk.VERTICAL,
                          style="Term.Vertical.TScrollbar",
                          command=app.config_text.yview)
-    csb.pack(side=tk.RIGHT, fill=tk.Y)
+    csb.pack(side=tk.RIGHT, fill=tk.Y, before=app.config_text)
     app.config_text.configure(yscrollcommand=csb.set)
