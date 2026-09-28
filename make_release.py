@@ -29,7 +29,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Everything the app imports or reads, plus user-facing docs/tools.
-INCLUDE_FILES = ["VSSM.py", "vs_commands.json", "requirements.txt",
+INCLUDE_FILES = ["VSSM.py", "vs_commands_builtin.json", "requirements.txt",
                  "README.md", "probe_stdin.py", ".gitignore"]
 INCLUDE_PACKAGES = ["core", "ui", "backup", "mods"]
 

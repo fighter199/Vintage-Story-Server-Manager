@@ -95,7 +95,8 @@ VSSM5/
 ├── VSSM.py                 entry point + ServerManagerApp (Tk host)
 ├── run_tests.py            pytest-free test runner (also runs a lint pass)
 ├── requirements.txt        optional extras + per-platform notes
-├── vs_commands.json        command-reference data for the COMMANDS tab
+├── vs_commands_builtin.json  command reference for the COMMANDS tab
+│                           (yours go in vs_commands_user.json)
 ├── core/
 │   ├── constants.py        APP_NAME/VERSION, logging bootstrap, OPERATOR_ROLES
 │   ├── parsers.py          log-line classification, player events, chat,
@@ -390,6 +391,33 @@ Hotkeys: `Ctrl+L` clear console · `Ctrl+Enter` send · `↑/↓` command
 history · `Ctrl+/` focus command entry · right-click console/player
 rows for context menus.
 
+## Your own commands (COMMANDS tab)
+
+The COMMANDS tab lists console commands from two files next to
+`VSSM.py`:
+
+- `vs_commands_builtin.json` — ships with VSSM and is replaced on every
+  update. Don't edit it.
+- `vs_commands_user.json` — yours; updates never touch it. Press
+  **✎ My commands** to create it (from a small example) and open it,
+  then **↻ Reload**.
+
+Same format in both: categories containing commands. A user command
+with the same name as a built-in one replaces it, and `"/name": null`
+hides a built-in one. Your commands are marked ★. Comments (`//`) and
+trailing commas are allowed; if the file has a mistake, the console
+says where and the built-in list still loads.
+
+Upgrading from 3.3 or earlier, where the list was `vs_commands.json`:
+commands you added or edited there are moved into
+`vs_commands_user.json` automatically on first launch, and the old
+file is kept as `vs_commands.json.old`.
+
+The built-in list only contains commands that work from the server
+console. Commands that act on the caller's own position, inventory,
+waypoints or land claims (`/land …`, `/waypoint …`, self-teleport
+`/tp` forms, `/kill`, …) were removed in 3.4.
+
 ## Data files
 
 | File                          | Purpose                                    |
@@ -397,6 +425,7 @@ rows for context menus.
 | `vserverman_settings.json`    | all settings, profiles, rules, playtime    |
 | `chat_log_<profile>.json`     | per-profile chat history                   |
 | `moddb_cache.json`            | TTL cache for mod-update lookups           |
+| `vs_commands_user.json`       | your own COMMANDS-tab entries (optional)   |
 | `logs/vserverman.log`         | application log (rotating)                 |
 | `logs/server-output.log`      | mirror of raw server stdout (rotating)     |
 

@@ -71,7 +71,9 @@ from core.settings import (load_settings, save_settings, get_active_profile,
                             chat_log_path, load_player_totals,
                             normalize_window_layout, fit_geometry)
 from core.custom_commands import ChatCommandDispatcher
+from core.command_files import load_commands, ensure_user_file, USER_FILE
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
+                        open_in_editor,
                          clean_mod_filename, fmt_size, backup_world_to_zip,
                          restore_backup_zip, enable_windows_dpi_awareness)
 from ui.theme import (Theme, pick_mono_font, font_sizes,
@@ -119,43 +121,20 @@ FALLBACK_COMMANDS = {
 }
 
 
-def _normalize_command_entry(cmd_name: str, raw) -> Optional[dict]:
-    if isinstance(raw, str):
-        return {"description": raw, "template": cmd_name, "args": []}
-    if not isinstance(raw, dict):
-        return None
-    entry = dict(raw)
-    entry.setdefault("description", "")
-    entry.setdefault("template", cmd_name)
-    entry.setdefault("args", [])
-    return entry
-
-
 def load_commands_data() -> dict:
+    """Merged built-in + user command reference (see core/command_files).
+    Problems reading either file are kept in _COMMAND_FILE_PROBLEMS so
+    the UI can report them instead of failing silently."""
+    global _COMMAND_FILE_PROBLEMS
     try:
         sdir = script_dir()
     except Exception:
         sdir = os.getcwd()
-    json_path = os.path.join(sdir, "vs_commands.json")
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = parse_json5_ish(f.read())
-    except Exception:
-        return FALLBACK_COMMANDS
-    if not isinstance(data, dict) or not data:
-        return FALLBACK_COMMANDS
-    out = {}
-    for category, cmds in data.items():
-        if category.startswith("_") or not isinstance(cmds, dict):
-            continue
-        cat_out = {}
-        for cmd_name, raw in cmds.items():
-            entry = _normalize_command_entry(cmd_name, raw)
-            if entry is not None:
-                cat_out[cmd_name] = entry
-        if cat_out:
-            out[category] = cat_out
-    return out or FALLBACK_COMMANDS
+    data, _COMMAND_FILE_PROBLEMS = load_commands(sdir)
+    return data or FALLBACK_COMMANDS
+
+
+_COMMAND_FILE_PROBLEMS: list = []
 
 
 # ======================================================================
@@ -515,6 +494,8 @@ class ServerManagerApp(tk.Tk):
             pass
 
         self.append_console("VSSM v3 initialized. Ready.", "system")
+        for problem in _COMMAND_FILE_PROBLEMS:
+            self.append_console(f"Commands: {problem}", "error")
         self.append_console(
             "Hotkeys: Ctrl+L clear · Ctrl+Enter send · ↑/↓ history · "
             "Right-click console to copy", "system")
@@ -1482,7 +1463,11 @@ class ServerManagerApp(tk.Tk):
             for name, _entry in matching:
                 row_num = int(self.cmd_tree.index("end-1c").split('.')[0])
                 has_args = isinstance(_entry, dict) and bool(_entry.get("args"))
-                self.cmd_tree.insert(tk.END, f"    {name}{'  ◆' if has_args else ''}\n", ("cmd",))
+                mine = isinstance(_entry, dict) and _entry.get("_source") == "user"
+                self.cmd_tree.insert(
+                    tk.END,
+                    f"    {name}{'  ◆' if has_args else ''}{'  ★' if mine else ''}\n",
+                    ("cmd",))
                 self._cmd_index[row_num] = (category, name)
         if not self._cmd_index and not self._cmd_cat_rows:
             self.cmd_tree.insert(tk.END, "\n    (no commands match)\n", ("category",))
@@ -1537,7 +1522,9 @@ class ServerManagerApp(tk.Tk):
         self.cmd_details.delete("1.0", tk.END)
         if name and isinstance(entry, dict):
             self.cmd_details.insert(tk.END, f"{name}\n", ("title",))
-            self.cmd_details.insert(tk.END, f"{category}\n\n", ("cat",))
+            source = ("  ·  ★ yours (vs_commands_user.json)"
+                      if entry.get("_source") == "user" else "")
+            self.cmd_details.insert(tk.END, f"{category}{source}\n\n", ("cat",))
             self.cmd_details.insert(tk.END,
                 entry.get("description") or "(No description)", ("body",))
         else:
@@ -1671,7 +1658,28 @@ class ServerManagerApp(tk.Tk):
         self._refresh_commands_tree()
         total = sum(len(v) for v in new_data.values())
         self.cmd_count_var.set(f"{total} commands")
-        self._notify(f"Reloaded — {total} commands", level="success")
+        if _COMMAND_FILE_PROBLEMS:
+            for problem in _COMMAND_FILE_PROBLEMS:
+                self.append_console(f"Commands: {problem}", "error")
+            self._notify(_COMMAND_FILE_PROBLEMS[0], level="error",
+                         duration_ms=8000)
+        else:
+            self._notify(f"Reloaded — {total} commands", level="success")
+
+    def _edit_user_commands(self):
+        """Open vs_commands_user.json (created from a template if needed)
+        in the system's editor for .json files."""
+        try:
+            path = ensure_user_file(script_dir())
+        except OSError as e:
+            self._notify(f"Could not create {USER_FILE}: {e}", level="error")
+            return
+        if not open_in_editor(path):
+            self._notify(f"Open {path} in a text editor, then press Reload.",
+                         level="info", duration_ms=8000)
+        else:
+            self._notify(f"Editing {USER_FILE} — press Reload when saved.",
+                         level="info", duration_ms=6000)
 
     # ------------------------------------------------------------------
     # Settings helpers

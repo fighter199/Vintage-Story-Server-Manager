@@ -90,6 +90,27 @@ def open_in_file_manager(path: str) -> bool:
         return False
 
 
+def open_in_editor(path: str) -> bool:
+    """Open a file with the system's default app for it (a text editor
+    for .json on most setups). Returns False if that couldn't start."""
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        if sys.platform.startswith("win"):
+            try:
+                os.startfile(os.path.normpath(path))      # type: ignore
+            except OSError:                               # no association
+                subprocess.Popen(["notepad", os.path.normpath(path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-t", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return True
+    except Exception as e:
+        LOG.warning("open_in_editor(%r) failed: %s", path, e)
+        return False
+
+
 # -----------------------------------------------------------------------
 # Mod filename sanitisation
 # -----------------------------------------------------------------------

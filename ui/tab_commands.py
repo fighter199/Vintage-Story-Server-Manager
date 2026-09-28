@@ -29,6 +29,9 @@ def build_commands_tab(parent, app):
     TermButton(search_row, "↻ Reload", app._reload_commands_json,
                variant="amber", font_spec=app.F_SMALL,
                padx=8, pady=2).pack(side=tk.RIGHT)
+    TermButton(search_row, "✎ My commands", app._edit_user_commands,
+               variant="amber", font_spec=app.F_SMALL,
+               padx=8, pady=2).pack(side=tk.RIGHT, padx=(0, 4))
     app.cmd_count_var = tk.StringVar(value="")
     tk.Label(search_row, textvariable=app.cmd_count_var,
              fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
