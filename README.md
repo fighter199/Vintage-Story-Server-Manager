@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.5**
+Current version: **3.5.1**
 
 ## Feature highlights
 
@@ -510,6 +510,12 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.5.1 (September 2026)
+
+- **/tp (player to player)** is back in the COMMANDS list (Moderator /
+  Admin): pick who moves and who they go to from the online players;
+  sends `/tp <player> <destination>`.
 
 ### v3.5 (September 2026)
 

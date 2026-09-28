@@ -192,6 +192,14 @@
         {"name": "z", "type": "int"}
       ]
     },
+    "/tp (player to player)": {
+      "template": "/tp {player} {destination}",
+      "description": "Teleport a player to another online player.",
+      "args": [
+        {"name": "player", "type": "player", "hint": "who moves"},
+        {"name": "destination", "type": "player", "hint": "who they go to"}
+      ]
+    },
 
     "/giveblock": {
       "template": "/giveblock {code} {qty} {player}",
