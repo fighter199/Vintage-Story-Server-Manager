@@ -1,0 +1,13 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Created by VSSM at runtime next to VSSM.py
+logs/
+vserverman_settings.json
+vserverman_settings.json.*
+chat_log_*.json
+moddb_cache.json
+
+# Built by make_release.py
+Release/

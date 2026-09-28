@@ -9,7 +9,7 @@ import os
 import sys
 
 APP_NAME    = "VSSM"
-APP_VERSION = "3.2"
+APP_VERSION = "3.3"
 SETTINGS_SCHEMA_VERSION = 7
 
 # -----------------------------------------------------------------------

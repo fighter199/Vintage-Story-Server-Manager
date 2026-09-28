@@ -31,7 +31,7 @@ from core.utils import fmt_size
 from core.world_db import (CHUNK_SIZE, MISSING, REGION_CHUNKS, ChunkSelection,
                            WorldDbError, delete_chunk_columns, load_detail,
                            load_overview, read_world_meta, render_ppm,
-                           rewrite_savegame)
+                           read_players, rewrite_savegame)
 from .theme import Theme
 from .widgets import TermButton, TermCheckbutton, panel_header
 
@@ -248,6 +248,9 @@ class WorldMapWindow(tk.Toplevel):
         self._detail_job = None
 
         self._grid_var = tk.BooleanVar(value=True)
+        self._players_var = tk.BooleanVar(value=True)
+        self._players: list[dict] = []
+        self._goto_var = tk.StringVar(value="Go to player…")
         self._hover_var = tk.StringVar(value="")
         self._sel_var = tk.StringVar(value="Nothing selected.")
         self._world_var = tk.StringVar(value="Loading…")
@@ -282,9 +285,16 @@ class WorldMapWindow(tk.Toplevel):
         self._reload_btn = TermButton(bar, "↻ Reload", self._load, **small)
         grid_chk = TermCheckbutton(bar, "Grid", self._grid_var,
                                    font_spec=app.F_SMALL, command=self._redraw)
+        players_chk = TermCheckbutton(bar, "Players", self._players_var,
+                                      font_spec=app.F_SMALL, command=self._redraw)
+        self._goto_combo = ttk.Combobox(bar, textvariable=self._goto_var,
+                                        state="readonly", width=18,
+                                        style="Term.TCombobox", font=app.F_SMALL)
+        self._goto_combo.bind("<<ComboboxSelected>>", self._goto_player)
         app._install_wrapping_row(
             bar, [*self._mode_buttons.values(), *self._sel_buttons,
-                  *view_buttons, self._reload_btn, grid_chk],
+                  *view_buttons, self._reload_btn, grid_chk, players_chk,
+                  self._goto_combo],
             spacing=6)
         self._set_mode("pan")
 
@@ -388,6 +398,10 @@ class WorldMapWindow(tk.Toplevel):
                 ppm = render_ppm(grid, meta["sea_level"], meta["map_size_y"],
                                  background=background,
                                  cancel=lambda: self._cancel)
+                try:
+                    players, _unreadable = read_players(self.path)
+                except (WorldDbError, OSError):
+                    players = []
             except InterruptedError:
                 return
             except (WorldDbError, OSError, ValueError) as e:
@@ -398,7 +412,7 @@ class WorldMapWindow(tk.Toplevel):
                 self._post(self._on_load_failed, f"{type(e).__name__}: {e}")
                 return
             self._post(self._on_loaded, meta, grid, index, skipped, ppm,
-                       mtime, time.time() - started)
+                       mtime, time.time() - started, players)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -408,9 +422,11 @@ class WorldMapWindow(tk.Toplevel):
         self._world_var.set("Could not load the savegame.")
         self._show_message(f"⚠ {message}")
 
-    def _on_loaded(self, meta, grid, index, skipped, ppm, mtime, elapsed):
+    def _on_loaded(self, meta, grid, index, skipped, ppm, mtime, elapsed,
+                   players=()):
         self._busy = None
         self._meta = meta
+        self._set_players(players)
         first_load = self._base.grid is None
         self._base.grid = grid
         self._base.index = index
@@ -441,6 +457,9 @@ class WorldMapWindow(tk.Toplevel):
                      "chunks — zoom in for full detail")
         if skipped:
             text += f" · {skipped} unreadable rows skipped"
+        if self._players:
+            n = len(self._players)
+            text += f" · {n} player{'s' if n != 1 else ''} (last saved positions)"
         self._world_var.set(text)
 
     def _show_message(self, text: str | None) -> None:
@@ -556,6 +575,71 @@ class WorldMapWindow(tk.Toplevel):
         self._note_var.set("")
         self._redraw()
         self._refresh_selection(redraw=False)
+
+    # -------------------------------------------------------------- players
+    @staticmethod
+    def _player_label(p: dict) -> str:
+        return p.get("name") or (p.get("uid") or "?")[:10]
+
+    def _set_players(self, players) -> None:
+        self._players = list(players)
+        labels = [self._player_label(p) for p in self._players
+                  if p.get("dimension", 0) == 0]
+        self._goto_combo.configure(values=labels)
+        self._goto_combo.configure(state="readonly" if labels else "disabled")
+        self._goto_var.set("Go to player…" if labels else "No players saved")
+
+    def _player_chunk(self, p: dict) -> tuple[float, float]:
+        return p["x"] / CHUNK_SIZE, p["z"] / CHUNK_SIZE
+
+    def _goto_player(self, _event=None) -> None:
+        name = self._goto_var.get()
+        for p in self._players:
+            if self._player_label(p) == name and p.get("dimension", 0) == 0:
+                c = self._canvas
+                self._zoom_exp = max(self._zoom_exp, 3)      # 8 px per chunk
+                s = self._scale()
+                fx, fz = self._player_chunk(p)
+                self._ox = fx - c.winfo_width() / (2 * s)
+                self._oz = fz - c.winfo_height() / (2 * s)
+                self._players_var.set(True)
+                self._on_view_changed()
+                break
+        self.after(10, lambda: self._goto_var.set("Go to player…"))
+
+    def _players_in_selection(self) -> list[dict]:
+        return [p for p in self._players if p.get("dimension", 0) == 0
+                and self._sel.contains(math.floor(p["x"] / CHUNK_SIZE),
+                                       math.floor(p["z"] / CHUNK_SIZE))]
+
+    def _player_near(self, sx: float, sy: float, radius: float = 9.0):
+        best, best_d = None, radius
+        for p in self._players:
+            if p.get("dimension", 0) != 0:
+                continue
+            px, py = self._to_screen(*self._player_chunk(p))
+            d = math.hypot(px - sx, py - sy)
+            if d <= best_d:
+                best, best_d = p, d
+        return best
+
+    def _draw_players(self, cw: int, ch: int) -> None:
+        c = self._canvas
+        shown = [p for p in self._players if p.get("dimension", 0) == 0]
+        # Labels on every marker would bury the map on busy servers.
+        labels = len(shown) <= 40 or self._scale() >= 4
+        for p in shown:
+            x, y = self._to_screen(*self._player_chunk(p))
+            if not (-40 <= x <= cw + 40 and -20 <= y <= ch + 20):
+                continue
+            c.create_oval(x - 5, y - 5, x + 5, y + 5, fill=Theme.CYAN,
+                          outline="#000000", width=2, tags="overlay")
+            if labels:
+                name = self._player_label(p)
+                for dx, dy, color in ((1, 1, "#000000"), (0, 0, Theme.CYAN)):
+                    c.create_text(x + 9 + dx, y + dy, text=name, anchor=tk.W,
+                                  fill=color, font=self._app.F_SMALL,
+                                  tags="overlay")
 
     # ----------------------------------------------------------------- view
     def _scale(self) -> float:
@@ -724,6 +808,9 @@ class WorldMapWindow(tk.Toplevel):
             x0, z0, x1, z1, _s = self._detail_rect
             rect(x0, z0, x1, z1, outline=Theme.CYAN, width=1, dash=(2, 4))
 
+        if self._players_var.get():
+            self._draw_players(cw, ch)
+
         # Map centre — in-game coordinates are shown relative to it.
         mx = self._meta.get("map_size_x", 0) / 2 / CHUNK_SIZE
         mz = self._meta.get("map_size_z", 0) / 2 / CHUNK_SIZE
@@ -825,6 +912,11 @@ class WorldMapWindow(tk.Toplevel):
             what = f"water, {-v} deep"
         else:
             what = f"surface y={v}"
+        player = self._player_near(event.x, event.y) \
+            if self._players_var.get() else None
+        if player is not None:
+            what += (f"   ·   player {self._player_label(player)} "
+                     f"(y={player['y']:.0f})")
         self._hover_var.set(
             f"X {rel_x:,}  Z {rel_z:,}   ·   chunk {cx}, {cz}   ·   "
             f"region {cx // REGION_CHUNKS}, {cz // REGION_CHUNKS}   ·   {what}")
@@ -1028,6 +1120,14 @@ class WorldMapWindow(tk.Toplevel):
                  anchor=tk.W).pack(fill=tk.X)
         _note(body, f"{area:,} chunks of map selected · roughly {fmt_size(est)} "
                     f"of the {fmt_size(file_size)} savegame.", Theme.AMBER, app)
+        inside = self._players_in_selection()
+        if inside:
+            names = ", ".join(self._player_label(p) for p in inside[:8])
+            more = f" and {len(inside) - 8} more" if len(inside) > 8 else ""
+            _note(body, f"⚠ {len(inside)} player(s) last saved inside the "
+                        f"selection: {names}{more}. They'll log back in to "
+                        "regenerated terrain, possibly underground.",
+                  Theme.RED, app)
 
         mode_var = tk.StringVar(
             value="rewrite" if can_rewrite and (fraction >= 0.2 or file_size < 2**31)
