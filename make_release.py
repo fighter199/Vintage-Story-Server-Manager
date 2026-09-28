@@ -28,9 +28,10 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Everything the app imports or reads, plus user-facing docs/tools.
+# Everything the app imports or reads, plus the README. Developer tools
+# (probe_stdin.py, run_tests.py, tests/, this script) stay in the repo.
 INCLUDE_FILES = ["VSSM.py", "vs_commands_builtin.json", "requirements.txt",
-                 "README.md", "probe_stdin.py"]
+                 "README.md"]
 # Only meaningful on the release branch (published with --publish, left
 # out of the zip): the ignore list and the workflow that turns each new
 # version on Main into a GitHub Release.
