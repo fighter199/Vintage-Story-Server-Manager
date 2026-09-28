@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.5.1**
+Current version: **3.5.2**
 
 ## Feature highlights
 
@@ -510,6 +510,12 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.5.2 (September 2026)
+
+- The release no longer includes `probe_stdin.py`, a hand-run
+  diagnostic VSSM never uses. It stays in the repository's development
+  branch for troubleshooting. Nothing else changed.
 
 ### v3.5.1 (September 2026)
 
