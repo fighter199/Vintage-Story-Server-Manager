@@ -404,8 +404,10 @@ migration and a timestamped pre-migration `.bak`. The persisted
 run.
 
 Themes: amber (default), green, cyan, neutral dark, or a fully custom
-palette via the CUSTOM THEME tab. UI scale: `Ctrl +` / `Ctrl -` /
-`Ctrl 0`, persisted.
+palette via the CUSTOM THEME tab. Changing theme — or saving custom
+colours — recolours the whole app at once, open world map included; no
+restart. Text size: `Ctrl +` / `Ctrl -` / `Ctrl 0`, also live and
+persisted.
 
 Hotkeys: `Ctrl+L` clear console · `Ctrl+Enter` send · `↑/↓` command
 history · `Ctrl+/` focus command entry · right-click console/player
@@ -458,7 +460,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, and
-utility helpers — 495 tests at the time of writing.
+utility helpers — 501 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
@@ -466,8 +468,9 @@ pytest tests/ -v               # or with real pytest
 ```
 
 `tests/ui_smoke.py` boots the real UI on a virtual display and fails if
-a tab's widgets are cut off at 100 % or 130 % text, or the world map
-can't open a small synthetic savegame. CI runs it on every push:
+a tab's widgets are cut off at 100 % or 130 % text, the world map
+can't open a small synthetic savegame, or a live theme change leaves any
+of the old theme's colours behind. CI runs it on every push:
 
 ```bash
 xvfb-run -a -s "-screen 0 1600x900x24" python tests/ui_smoke.py

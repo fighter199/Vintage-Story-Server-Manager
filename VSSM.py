@@ -71,9 +71,9 @@ from core.processes import find_external_servers, describe as describe_servers
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
                         open_in_editor,
                          fmt_size, enable_windows_dpi_awareness)
-from ui.theme import (Theme, pick_mono_font, font_sizes,
+from ui.theme import (Theme, ColorRemap, palette, pick_mono_font, font_sizes,
                       TEXT_SCALE_MIN, TEXT_SCALE_MAX)
-from ui.widgets import (TermButton, TermEntry, TabStrip,
+from ui.widgets import (TermButton, TermEntry, TabStrip, retheme_tree,
                         flow_row, reflow_all,
                          Sparkline, ScrollableFrame, themed_frame,
                          panel_header, ToastQueue)
@@ -582,19 +582,27 @@ class ServerManagerApp(tk.Tk):
                         background=Theme.AMBER_DIM, troughcolor=Theme.BG_DARK,
                         bordercolor=Theme.BORDER, arrowcolor=Theme.AMBER,
                         lightcolor=Theme.BG_DARK, darkcolor=Theme.BG_DARK)
+        # clam draws notebook and tab outlines in near-white unless told
+        # otherwise; keep them in the theme's border colour.
         style.configure("Term.TNotebook",
                         background=Theme.BG_DARK, borderwidth=0,
-                        tabmargins=[0, 0, 0, 0])
+                        tabmargins=[0, 0, 0, 0], bordercolor=Theme.BORDER,
+                        lightcolor=Theme.BORDER, darkcolor=Theme.BORDER)
         style.configure("Term.TNotebook.Tab",
                         background=Theme.BG_DARK, foreground=Theme.AMBER_DIM,
-                        padding=[14, 6], borderwidth=0, font=self.F_NORMAL)
+                        padding=[14, 6], borderwidth=0, font=self.F_NORMAL,
+                        bordercolor=Theme.BORDER, lightcolor=Theme.BG_DARK,
+                        darkcolor=Theme.BG_DARK)
         style.map("Term.TNotebook.Tab",
                   background=[("selected", Theme.BG_PANEL), ("active", Theme.BG_PANEL)],
                   foreground=[("selected", Theme.AMBER_GLOW), ("active", Theme.AMBER)],
-                  bordercolor=[("selected", Theme.BORDER)])
+                  bordercolor=[("selected", Theme.AMBER_DIM)],
+                  lightcolor=[("selected", Theme.BG_PANEL)])
         # Sidebar notebook: its tab row is drawn by ui.widgets.TabStrip.
         style.configure("Strip.TNotebook", background=Theme.BG_PANEL,
-                        borderwidth=0, tabmargins=[0, 0, 0, 0])
+                        borderwidth=0, tabmargins=[0, 0, 0, 0],
+                        bordercolor=Theme.BORDER, lightcolor=Theme.BORDER,
+                        darkcolor=Theme.BORDER)
         style.layout("Strip.TNotebook.Tab", [])
         style.configure("Term.TPanedwindow",
                         background=Theme.BORDER, sashwidth=4,
@@ -1703,14 +1711,30 @@ class ServerManagerApp(tk.Tk):
             except Exception:
                 pass
 
-    def _on_theme_change(self):
-        preset = self.theme_preset_var.get()
+    def _apply_theme(self, preset: str) -> None:
+        """Switch colour preset live: every existing widget, text tag
+        and canvas item is mapped from the old palette to the new one."""
+        old = palette()
         Theme.apply_preset(preset)
         if preset == "custom":
             Theme.load_custom_colors(self._settings.get("custom_theme_colors", {}))
+        self._theme_preset = preset
+        self._ttk_style_ready = False
+        self._setup_ttk_style()
+        remap = ColorRemap(old, palette())
+        if remap:
+            retheme_tree(self, remap)
+        try:
+            self._refresh_tag_button_styles()   # mod browser tag chips
+        except Exception:
+            LOG.exception("restyling mod tag chips failed")
+
+    def _on_theme_change(self):
+        preset = self.theme_preset_var.get()
+        self._apply_theme(preset)
         self._settings["theme_preset"] = preset
         save_settings(self._settings)
-        self._notify("Theme applied — restart for full effect.", level="info")
+        self._notify(f"Theme: {preset}", level="info")
 
     def _save_custom_colors(self):
         colors = {}
@@ -1719,8 +1743,13 @@ class ServerManagerApp(tk.Tk):
             if val:
                 colors[key] = val
         self._settings["custom_theme_colors"] = colors
+        # Saving custom colours means wanting to see them: switch to the
+        # custom preset (or refresh it) right away.
+        self.theme_preset_var.set("custom")
+        self._settings["theme_preset"] = "custom"
         save_settings(self._settings)
-        self._notify("Custom colors saved — restart to apply.", level="success")
+        self._apply_theme("custom")
+        self._notify("Custom colors saved and applied.", level="success")
 
     def _profile_field_values(self) -> dict:
         """What the UI currently shows for each per-profile setting."""

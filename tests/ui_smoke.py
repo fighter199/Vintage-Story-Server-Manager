@@ -11,7 +11,10 @@ the checkout), boots it, and fails if:
   * any exception reaches Tk's error handler,
   * any widget in a sidebar tab is cut off horizontally — past the tab's
     edge, squeezed, or hidden for lack of room — at 100 % or 130 % text,
-  * the world map can't open a small synthetic savegame.
+  * the world map can't open a small synthetic savegame,
+  * after a live theme change any colour of the previous theme is left
+    anywhere (widgets, text tags, canvas items, button hover colours,
+    ttk styles).
 """
 from __future__ import annotations
 
@@ -92,6 +95,62 @@ def clipped(tab, tolerance: int = 2) -> list[str]:
     return bad
 
 
+def leftover_colors(app, old_colors: set) -> list[str]:
+    """Places still showing a colour of the previous theme."""
+    from ui.widgets import (TermButton, _ITEM_COLOR_OPTIONS,
+                            _TAG_COLOR_OPTIONS, _WIDGET_COLOR_OPTIONS)
+    tcl = app.tk
+    found = []
+
+    def check(where, getter, options):
+        for opt in options:
+            try:
+                value = str(getter("-" + opt)).lower()
+            except Exception:
+                continue
+            if value in old_colors:
+                found.append(f"{where} -{opt} is still {value}")
+
+    stack = [str(app)]
+    while stack:
+        path = stack.pop()
+        try:
+            stack.extend(str(c) for c in tcl.splitlist(
+                tcl.call("winfo", "children", path)))
+            wclass = str(tcl.call("winfo", "class", path))
+        except Exception:
+            continue
+        try:
+            widget = app.nametowidget(path)
+        except KeyError:
+            widget = None
+        if getattr(widget, "_no_retheme", False):
+            continue
+        check(path, lambda o, p=path: tcl.call(p, "cget", o), _WIDGET_COLOR_OPTIONS)
+        if wclass == "Text":
+            for tag in tcl.splitlist(tcl.call(path, "tag", "names")):
+                check(f"{path} tag {tag}",
+                      lambda o, p=path, t=tag: tcl.call(p, "tag", "cget", t, o),
+                      _TAG_COLOR_OPTIONS)
+        elif wclass == "Canvas":
+            for item in tcl.splitlist(tcl.call(path, "find", "all")):
+                check(f"{path} item {item}",
+                      lambda o, p=path, i=item: tcl.call(p, "itemcget", i, o),
+                      _ITEM_COLOR_OPTIONS)
+        if isinstance(widget, TermButton):
+            for attr in ("_fg", "_bg", "_bg_hover", "_border"):
+                if str(getattr(widget, attr)).lower() in old_colors:
+                    found.append(f"{path} {attr} is still {getattr(widget, attr)}")
+    from tkinter import ttk
+    style = ttk.Style(app)
+    for name, opt in (("Term.Vertical.TScrollbar", "background"),
+                      ("Term.TCombobox", "foreground"),
+                      ("Term.TPanedwindow", "background")):
+        if str(style.lookup(name, opt)).lower() in old_colors:
+            found.append(f"ttk style {name} {opt} unchanged")
+    return found
+
+
 def main() -> int:
     app_dir = make_app_copy()
     world_dir = make_world(app_dir, os.path.join(os.path.dirname(app_dir), "Saves"))
@@ -124,6 +183,17 @@ def main() -> int:
             for problem in clipped(tab):
                 failures.append(f"[{scale:.0%}] {name}: {problem}")
 
+    def check_theme_change() -> None:
+        from ui.theme import palette
+        for preset in ("green", "dark", "amber"):
+            before = set(palette().values())
+            app.theme_preset_var.set(preset)
+            app._on_theme_change()
+            settle(2)
+            stale = before - set(palette().values())
+            for problem in leftover_colors(app, stale)[:10]:
+                failures.append(f"[theme {preset}] {problem}")
+
     def run():
         try:
             check_tabs(1.0)
@@ -144,6 +214,8 @@ def main() -> int:
             elif win._base.index.hits != 24 * 24:
                 failures.append(f"world map read {win._base.index.hits} columns, "
                                 f"expected {24 * 24}")
+            # With the map window open, so its canvas is covered too.
+            check_theme_change()
         except Exception:
             failures.append(traceback.format_exc())
         failures.extend(f"Tk callback error:\n{e}" for e in errors)

@@ -828,6 +828,15 @@ class WorldMapWindow(tk.Toplevel):
                           tags="overlay")
         c.tag_raise(self._msg_item)
 
+    def retheme(self, remap) -> None:
+        """After a theme change (see ui.widgets.retheme_tree): tool
+        buttons and overlays in the new colours."""
+        for btn in self._mode_buttons.values():
+            if hasattr(btn, "_orig_bg"):
+                btn._orig_bg = remap(btn._orig_bg, "background", True)
+        self._set_mode(self._mode)
+        self._redraw()
+
     # ---------------------------------------------------------------- mouse
     def _set_mode(self, mode: str) -> None:
         self._mode = mode

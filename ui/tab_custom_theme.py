@@ -68,6 +68,7 @@ def build_custom_theme_tab(parent, app):
             highlightbackground=Theme.BORDER, highlightthickness=1,
             width=3,
         )
+        swatch._no_retheme = True     # shows the value, not the theme
         swatch.pack(side=tk.LEFT, padx=(0, 6), ipady=2)
 
         TermEntry(row, textvariable=var, width=10,
