@@ -72,6 +72,7 @@ from core.settings import (load_settings, save_settings, get_active_profile,
                             normalize_window_layout, fit_geometry)
 from core.custom_commands import ChatCommandDispatcher
 from core.command_files import load_commands, ensure_user_file, USER_FILE
+from core.processes import find_external_servers, describe as describe_servers
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
                         open_in_editor,
                          clean_mod_filename, fmt_size, backup_world_to_zip,
@@ -3094,7 +3095,45 @@ class ServerManagerApp(tk.Tk):
     # Thin shims so the existing tab buttons + auto-save / cron paths
     # keep their old call shapes.
     def backup_world(self, silent: bool = False):
+        if not self.is_running and self._external_servers():
+            self.append_console(
+                "A Vintage Story server VSSM didn't start seems to be running "
+                "on this world — VSSM can't ask it for a consistent "
+                "/genbackup, so this backup may catch the savegame mid-write.",
+                "warn")
         return self._backup_manager.backup_world(silent=silent)
+
+    def _external_servers(self, world: str = "") -> list:
+        """Running Vintage Story servers (other than VSSM's own) that may
+        be using `world` (default: the configured world folder)."""
+        own = []
+        if self.server_process is not None:
+            own.append(self.server_process.pid)
+        try:
+            return find_external_servers(world or self.get_world_folder(),
+                                         own_pids=own)
+        except Exception:
+            LOG.exception("external server check failed")
+            return []
+
+    def _confirm_no_external_server(self, action: str, world: str = "",
+                                    parent=None) -> bool:
+        """True if it's OK to go ahead with `action` on the savegame: no
+        outside server is using it, or the user says to continue."""
+        servers = self._external_servers(world)
+        if not servers:
+            return True
+        sure = any(s["certain"] for s in servers)
+        what = ("is running and uses this world's data folder" if sure else
+                "is running (VSSM can't tell which world it uses)")
+        return messagebox.askyesno(
+            "Server running outside VSSM",
+            f"A Vintage Story server that VSSM didn't start {what}:\n\n"
+            f"{describe_servers(servers)}\n\n"
+            f"If it uses this savegame, {action} now can corrupt the world "
+            "or be undone by the server. Stop that server first.\n\n"
+            "Continue anyway?",
+            icon="warning", default="no", parent=parent or self)
 
     def _start_async_backup(self, dst=None, silent: bool = False,
                              reason: str = "manual",
@@ -3121,6 +3160,9 @@ class ServerManagerApp(tk.Tk):
                 f"Restore '{os.path.basename(path)}'?\n"
                 "The current world will be archived first.",
                 parent=self):
+            return
+        if not self.is_running and \
+                not self._confirm_no_external_server("restoring a backup"):
             return
         self._backup_manager.restore_from_zip(path)
 
@@ -3223,6 +3265,9 @@ class ServerManagerApp(tk.Tk):
                 "The current world will be archived first.\n"
                 "The server must be stopped before restoring.",
                 parent=self):
+            return
+        if not self.is_running and \
+                not self._confirm_no_external_server("restoring a backup"):
             return
         if self._backup_manager.restore_from_zip(path):
             self._refresh_backup_list()

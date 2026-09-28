@@ -1070,6 +1070,10 @@ class WorldMapWindow(tk.Toplevel):
                     parent=self):
                 self._load()
             return
+        if not app._confirm_no_external_server(
+                "deleting chunks", world=os.path.dirname(os.path.abspath(self.path)),
+                parent=self):
+            return
         locked, _sidecars = app._savegame_lock_status()
         if any(os.path.abspath(p) == os.path.abspath(self.path) for p in locked):
             messagebox.showerror(
