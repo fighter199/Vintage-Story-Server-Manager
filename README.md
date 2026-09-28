@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.3**
+Current version: **3.4**
 
 ## Feature highlights
 
@@ -499,6 +499,34 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.4 (September 2026)
+
+- **Land claims on the world map** — claims (players' and traders')
+  are outlined and listed in *Go to…*; *Keep claims…* selects
+  everything else, and deleting keeps claimed land by default.
+- **Your own commands survive updates** — the COMMANDS list is now a
+  built-in file plus `vs_commands_user.json` for your additions and
+  edits (✎ My commands). Edits made to the old `vs_commands.json` are
+  moved over automatically on first start.
+- **Server-only command list** — 25 commands that need an in-game
+  player to run them (land claiming, waypoints, /kill, /gamemode for
+  yourself, …) were removed from the COMMANDS reference.
+- **Profiles** — create, duplicate, rename, delete and switch profiles
+  from SETTINGS; each keeps its own server, folders, schedules, custom
+  commands, autorun rules, chat log and playtime.
+- **Live themes** — changing theme or saving custom colours recolours
+  the app immediately; no restart.
+- **Faster backups** — about 2.6× quicker, with progress by size and
+  cancel mid-file.
+- **Keep near players…** — world-map tool that selects everything
+  except squares around players.
+- **Safety** — when a server VSSM didn't start is running on the same
+  world, deleting chunks and restoring a backup ask first, and backups
+  warn that they may catch the savegame mid-write.
+- **Fixed:** scrollbars, role checkboxes, buttons and labels cut off
+  or hidden in narrow panels or at larger text sizes; notebook outlines
+  drawn in near-white instead of the theme colour.
 
 ### v3.3 (September 2026)
 
