@@ -73,6 +73,13 @@ python run_tests.py               # full test suite, no pytest needed
 First launch creates `vserverman_settings.json`, a `logs/` folder, and
 (per profile) `chat_log_<profile>.json` next to `VSSM.py`.
 
+**Updates.** The far left of the header has **⌂ GitHub** (opens the
+project page) and **⟳ Check for updates**, which asks GitHub for the
+latest release and offers its download page when it's newer. Tick
+*Check for updates on startup* to do that quietly at each launch — it's
+off by default, and it only speaks up when there is a new version.
+Nothing is downloaded or installed automatically.
+
 ### Branches
 
 - **`Main`** — the current release: only the files VSSM needs to run
@@ -268,6 +275,10 @@ Every player row shows **🕐 session** (since their latest join) and
 case-preserved — VS player names are case-sensitive. The list is kept
 current by parsing join/leave lines plus a configurable `/list clients`
 poll (Settings, 0 disables).
+
+Right-click a player for copy name, OP / de-OP, kick, ban and
+teleports between online players: **Teleport <player> to** another
+online player, or **Teleport to <player>** to bring someone to them.
 
 Three optional Settings-tab guards gate restarts/shutdowns against the
 live player list: manual restart and manual shutdown show a
@@ -470,7 +481,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, and
-utility helpers — 507 tests at the time of writing.
+utility helpers — 512 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
