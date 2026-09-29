@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.5.2**
+Current version: **3.6**
 
 ## Feature highlights
 
@@ -517,6 +517,14 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.6 (September 2026)
+
+- **Save the world map as an image** — *📷 Save image…* in the map
+  window saves a PNG of the visible area as shown, or of the whole
+  explored map (up to 4096 px a side). Grid, players, claims and the
+  selection are included as toggled, with the savegame name and date in
+  the corner. No extra software needed.
 
 ### v3.5.2 (September 2026)
 
