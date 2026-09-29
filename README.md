@@ -338,6 +338,12 @@ takes 42 s), a full-detail tile 1–5 s, under 30 MB of RAM.
 | Keep claims…             | select everything except every land      |
 |                          | claim plus a margin (combines as above)  |
 
+**📷 Save image…** saves the map as a PNG — either the *visible area*
+exactly as shown, or the *whole explored map* (at up to 32 px per chunk,
+capped at 4096 px a side). Grid, players, claims and the selection are
+included as currently toggled, with the savegame name and date in the
+corner. No extra software is needed.
+
 The status bar shows in-game coordinates (relative to the map
 centre), chunk and region under the cursor, surface height, and the
 selection's size with an estimate of how much of the file it is.
@@ -481,7 +487,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, and
-utility helpers — 512 tests at the time of writing.
+utility helpers — 516 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
@@ -490,7 +496,8 @@ pytest tests/ -v               # or with real pytest
 
 `tests/ui_smoke.py` boots the real UI on a virtual display and fails if
 a tab's widgets are cut off at 100 % or 130 % text, the world map
-can't open a small synthetic savegame and its land claim, or a live
+can't open a small synthetic savegame and its land claim or save it as
+an image, or a live
 theme change leaves any of the old theme's colours behind. CI runs it on every push:
 
 ```bash

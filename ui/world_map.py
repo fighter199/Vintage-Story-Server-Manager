@@ -32,6 +32,7 @@ from core.world_db import (CHUNK_SIZE, MISSING, REGION_CHUNKS, ChunkSelection,
                            WorldDbError, delete_chunk_columns, load_detail,
                            load_overview, read_world_meta, render_ppm,
                            read_players, rewrite_savegame)
+from .map_painters import CanvasPainter, ImagePainter
 from .theme import Theme
 from .widgets import TermButton, TermCheckbutton, auto_wrap, panel_header
 
@@ -42,6 +43,12 @@ _MAX_ZOOM_EXP = 6
 # Full-detail tile budget: columns read and pixels rendered per tile.
 _DETAIL_MAX_COLUMNS = 30_000
 _DETAIL_MAX_PIXELS = 1_500_000
+
+# Map images: the whole explored map is saved at the largest zoom (up to
+# 32 px per chunk) that keeps it within this many pixels a side.
+_EXPORT_MAX_SIDE = 4096
+_EXPORT_MAX_ZOOM_EXP = 5
+_EXPORT_MARGIN = 2                        # chunks of border around the world
 
 GOTO_PROMPT = "Go to…"
 # Chunks kept around a land claim when the delete dialog protects it.
@@ -259,6 +266,7 @@ class WorldMapWindow(tk.Toplevel):
         self._claims: list = []                 # core.world_db.LandClaim
         self._goto_targets: dict = {}           # label -> (chunk x, chunk z, kind)
         self._goto_var = tk.StringVar(value=GOTO_PROMPT)
+        self._export_dir = ""
         self._hover_var = tk.StringVar(value="")
         self._sel_var = tk.StringVar(value="Nothing selected.")
         self._world_var = tk.StringVar(value="Loading…")
@@ -294,6 +302,8 @@ class WorldMapWindow(tk.Toplevel):
             TermButton(bar, "Fit", self._fit, **small),
         ]
         self._reload_btn = TermButton(bar, "↻ Reload", self._load, **small)
+        self._image_btn = TermButton(bar, "📷 Save image…", self._save_image_menu,
+                                     **small)
         grid_chk = TermCheckbutton(bar, "Grid", self._grid_var,
                                    font_spec=app.F_SMALL, command=self._redraw)
         players_chk = TermCheckbutton(bar, "Players", self._players_var,
@@ -306,7 +316,8 @@ class WorldMapWindow(tk.Toplevel):
         self._goto_combo.bind("<<ComboboxSelected>>", self._goto)
         app._install_wrapping_row(
             bar, [*self._mode_buttons.values(), *self._sel_buttons,
-                  *view_buttons, self._reload_btn, grid_chk, players_chk,
+                  *view_buttons, self._reload_btn, self._image_btn,
+                  grid_chk, players_chk,
                   claims_chk, self._goto_combo],
             spacing=6)
         self._set_mode("pan")
@@ -654,23 +665,19 @@ class WorldMapWindow(tk.Toplevel):
                 best, best_d = p, d
         return best
 
-    def _draw_players(self, cw: int, ch: int) -> None:
-        c = self._canvas
-        shown = [p for p in self._players if p.get("dimension", 0) == 0]
+    def _draw_players(self, p, cw: int, ch: int) -> None:
+        shown = [pl for pl in self._players if pl.get("dimension", 0) == 0]
         # Labels on every marker would bury the map on busy servers.
         labels = len(shown) <= 40 or self._scale() >= 4
-        for p in shown:
-            x, y = self._to_screen(*self._player_chunk(p))
+        for pl in shown:
+            x, y = self._to_screen(*self._player_chunk(pl))
             if not (-40 <= x <= cw + 40 and -20 <= y <= ch + 20):
                 continue
-            c.create_oval(x - 5, y - 5, x + 5, y + 5, fill=Theme.CYAN,
-                          outline="#000000", width=2, tags="overlay")
+            p.dot(x, y, 5, Theme.CYAN, "#000000", 2)
             if labels:
-                name = self._player_label(p)
+                name = self._player_label(pl)
                 for dx, dy, color in ((1, 1, "#000000"), (0, 0, Theme.CYAN)):
-                    c.create_text(x + 9 + dx, y + dy, text=name, anchor=tk.W,
-                                  fill=color, font=self._app.F_SMALL,
-                                  tags="overlay")
+                    p.text(x + 9 + dx, y + dy, name, color, tk.W)
 
     # --------------------------------------------------------------- claims
     def _claims_in_selection(self) -> list:
@@ -682,8 +689,7 @@ class WorldMapWindow(tk.Toplevel):
                 if any(x1 <= bx <= x2 and z1 <= bz <= z2
                        for x1, _y1, z1, x2, _y2, z2 in c.areas)]
 
-    def _draw_claims(self, cw: int, ch: int) -> None:
-        c = self._canvas
+    def _draw_claims(self, p, cw: int, ch: int) -> None:
         for claim in self._claims:
             # Named once it's big enough on screen not to bury the map
             # (hovering names it at any size).
@@ -704,16 +710,14 @@ class WorldMapWindow(tk.Toplevel):
                 if yb - ya < 5:
                     mid = (ya + yb) / 2
                     ya, yb = mid - 2.5, mid + 2.5
-                c.create_rectangle(max(-4, xa), max(-4, ya), min(cw + 4, xb),
-                                   min(ch + 4, yb), outline=Theme.PURPLE,
-                                   width=2, tags="overlay")
+                p.rect(max(-4, xa), max(-4, ya), min(cw + 4, xb),
+                       min(ch + 4, yb), outline=Theme.PURPLE, width=2)
             if label_at is not None:
                 x, y = label_at
                 if -200 <= x <= cw and 0 <= y <= ch + 20:
                     for dx, dy, color in ((1, 1, "#000000"), (0, 0, Theme.PURPLE)):
-                        c.create_text(x + dx, y - 3 + dy, text=f"⚑ {claim.label}",
-                                      anchor=tk.SW, fill=color,
-                                      font=self._app.F_SMALL, tags="overlay")
+                        p.text(x + dx, y - 3 + dy, f"⚑ {claim.label}", color,
+                               tk.SW)
 
     # ----------------------------------------------------------------- view
     def _scale(self) -> float:
@@ -787,13 +791,25 @@ class WorldMapWindow(tk.Toplevel):
         self._draw_overlays(cw, ch)
 
     def _draw_layer(self, layer: _Layer, cw: int, ch: int) -> None:
-        """Copy the visible part of layer.photo into its view image at the
-        current zoom (always a power-of-two ratio → Tk zoom/subsample)."""
         c = self._canvas
+        pos = self._render_layer(layer, layer.view, cw, ch)
+        if pos is None:
+            c.itemconfigure(layer.item, state="hidden")
+            return
+        c.coords(layer.item, *pos)
+        c.itemconfigure(layer.item, state="normal")
+        c.tag_raise(layer.item)
+
+    def _render_layer(self, layer: _Layer, dest: tk.PhotoImage, cw: int,
+                      ch: int):
+        """Copy the part of layer.photo inside a cw × ch view into `dest`
+        at the current zoom (always a power-of-two ratio → Tk
+        zoom/subsample). Returns where `dest` goes in the view, or None
+        if nothing of the layer is in view."""
         g = layer.grid
         ppc = g.px_per_chunk
         f = self._scale() / ppc
-        bx = (self._ox - g.min_cx) * ppc          # image px at canvas (0, 0)
+        bx = (self._ox - g.min_cx) * ppc          # image px at view (0, 0)
         by = (self._oz - g.min_cz) * ppc
         if f >= 1:
             n = int(round(f))
@@ -813,18 +829,132 @@ class WorldMapWindow(tk.Toplevel):
             out_w, out_h = -(-(x1 - x0) // d), -(-(y1 - y0) // d)
             pos = ((x0 - bx) / d, (y0 - by) / d)
         if x1 <= x0 or y1 <= y0:
-            c.itemconfigure(layer.item, state="hidden")
-            return
-        layer.view.blank()
-        layer.view.configure(width=out_w, height=out_h)
-        self.tk.call(layer.view, "copy", layer.photo,
-                     "-from", x0, y0, x1, y1, *opts)
-        c.coords(layer.item, *pos)
-        c.itemconfigure(layer.item, state="normal")
-        c.tag_raise(layer.item)
+            return None
+        dest.blank()
+        dest.configure(width=out_w, height=out_h)
+        self.tk.call(dest, "copy", layer.photo, "-from", x0, y0, x1, y1, *opts)
+        return pos
 
-    def _draw_overlays(self, cw: int, ch: int) -> None:
+    # --------------------------------------------------------------- export
+    def _export_sizes(self) -> dict:
+        """{"view": (w, h), "world": (w, h, zoom exponent)}."""
         c = self._canvas
+        g = self._base.grid
+        span = max(g.max_cx - g.min_cx, g.max_cz - g.min_cz) + 1 + 2 * _EXPORT_MARGIN
+        exp = max(_MIN_ZOOM_EXP,
+                  min(_EXPORT_MAX_ZOOM_EXP,
+                      math.floor(math.log2(_EXPORT_MAX_SIDE / span))))
+        s = 2.0 ** exp
+        return {
+            "view": (max(1, c.winfo_width()), max(1, c.winfo_height())),
+            "world": (max(1, math.ceil((g.max_cx - g.min_cx + 1 + 2 * _EXPORT_MARGIN) * s)),
+                      max(1, math.ceil((g.max_cz - g.min_cz + 1 + 2 * _EXPORT_MARGIN) * s)),
+                      exp),
+        }
+
+    def _compose_image(self, w: int, h: int, detail: bool) -> tk.PhotoImage:
+        """The map as currently shown (layers + overlays) at the current
+        view settings, as a w × h PhotoImage."""
+        img = tk.PhotoImage(master=self, width=w, height=h)
+        img.put(Theme.BG_INPUT, to=(0, 0, w, h))
+        layers = [self._base]
+        if detail and self._detail.photo is not None and self._detail_wanted():
+            layers.append(self._detail)
+        part = tk.PhotoImage(master=self)
+        for layer in layers:
+            pos = self._render_layer(layer, part, w, h)
+            if pos is None:
+                continue
+            px, py = int(round(pos[0])), int(round(pos[1]))
+            sx, sy = max(0, -px), max(0, -py)
+            ex = min(int(part.cget("width")), sx + w - max(0, px))
+            ey = min(int(part.cget("height")), sy + h - max(0, py))
+            if ex > sx and ey > sy:
+                self.tk.call(img, "copy", part, "-from", sx, sy, ex, ey,
+                             "-to", max(0, px), max(0, py))
+        painter = ImagePainter(img, self)
+        self._draw_overlays(w, h, painter)
+        caption = (f"{os.path.basename(self.path)}  ·  "
+                   f"{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        for dx, dy, color in ((1, 1, "#000000"), (0, 0, Theme.AMBER_GLOW)):
+            painter.text(6 + dx, h - 6 + dy, caption, color, tk.SW)
+        return img
+
+    def _save_image_menu(self) -> None:
+        if self._base.grid is None or self._busy == "load":
+            return
+        sizes = self._export_sizes()
+        vw, vh = sizes["view"]
+        ww, wh, _exp = sizes["world"]
+        app = self._app
+        menu = tk.Menu(self, tearoff=0, bg=Theme.BG_PANEL, fg=Theme.AMBER,
+                       activebackground=Theme.BG_SELECT,
+                       activeforeground=Theme.AMBER_GLOW, bd=0,
+                       font=app.F_SMALL)
+        menu.add_command(label=f"Visible area ({vw} × {vh} px)",
+                         command=lambda: self._save_image("view"))
+        menu.add_command(label=f"Whole explored map ({ww} × {wh} px)",
+                         command=lambda: self._save_image("world"))
+        btn = self._image_btn
+        try:
+            menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _save_image(self, scope: str, path: str | None = None) -> str | None:
+        """Save the map as a PNG: the visible area as shown, or the whole
+        explored map at the largest zoom that keeps it within
+        _EXPORT_MAX_SIDE px. Overlays follow the Grid / Players / Claims
+        toggles and the current selection. Returns the saved path."""
+        if self._base.grid is None:
+            return None
+        if path is None:
+            stem = os.path.splitext(os.path.basename(self.path))[0]
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            path = filedialog.asksaveasfilename(
+                parent=self, title="Save map image", defaultextension=".png",
+                filetypes=[("PNG image", "*.png")],
+                initialdir=self._export_dir or os.path.expanduser("~"),
+                initialfile=f"{stem}-{'view' if scope == 'view' else 'map'}-{stamp}.png")
+            if not path:
+                return None
+        sizes = self._export_sizes()
+        saved = (self._ox, self._oz, self._zoom_exp)
+        self.configure(cursor="watch")
+        self.update_idletasks()
+        try:
+            if scope == "view":
+                w, h = sizes["view"]
+                img = self._compose_image(w, h, detail=True)
+            else:
+                w, h, exp = sizes["world"]
+                g = self._base.grid
+                self._ox = g.min_cx - _EXPORT_MARGIN
+                self._oz = g.min_cz - _EXPORT_MARGIN
+                self._zoom_exp = exp
+                img = self._compose_image(w, h, detail=False)
+            img.write(path, format="png")
+        except (tk.TclError, OSError) as e:
+            LOG.exception("saving map image failed")
+            messagebox.showerror("Save image", f"Could not save the image:\n{e}",
+                                 parent=self)
+            return None
+        finally:
+            self._ox, self._oz, self._zoom_exp = saved
+            self.configure(cursor="")
+        self._export_dir = os.path.dirname(os.path.abspath(path))
+        self._app.append_console(f"World map: image saved to {path} ({w} × {h} px).",
+                                 "success")
+        self._app._notify(f"Map image saved: {os.path.basename(path)}",
+                          level="success")
+        return path
+
+    def _draw_overlays(self, cw: int, ch: int, p=None) -> None:
+        """Grid, selection, detail outline, claims, players and the map
+        centre, through painter `p` (the canvas unless exporting)."""
+        on_canvas = p is None
+        if on_canvas:
+            p = CanvasPainter(self._canvas, self._app.F_SMALL, self._stipple_ok)
         chunk_px = self._scale()
 
         def clip_x(v):
@@ -845,31 +975,28 @@ class WorldMapWindow(tk.Toplevel):
                 cx1, cz1 = self._chunk_at(cw, ch)
                 for cx in range(cx0 - cx0 % step, cx1 + 1, step):
                     x, _ = self._to_screen(cx, 0)
-                    c.create_line(x, 0, x, ch, fill=color, dash=dash,
-                                  tags="overlay")
+                    p.line(x, 0, x, ch, color, dash=dash)
                 for cz in range(cz0 - cz0 % step, cz1 + 1, step):
                     _, y = self._to_screen(0, cz)
-                    c.create_line(0, y, cw, y, fill=color, dash=dash,
-                                  tags="overlay")
+                    p.line(0, y, cw, y, color, dash=dash)
 
         def rect(x0, z0, x1, z1, **opts):
             xa, ya = self._to_screen(x0, z0)
             xb, yb = self._to_screen(x1 + 1, z1 + 1)
             if xb < 0 or yb < 0 or xa > cw or ya > ch:
                 return
-            c.create_rectangle(clip_x(xa), clip_y(ya), clip_x(xb), clip_y(yb),
-                               tags="overlay", **opts)
+            p.rect(clip_x(xa), clip_y(ya), clip_x(xb), clip_y(yb), **opts)
 
         # Selection fill: one rectangle per (row band, x-run). Without
         # stipple support (macOS) the bands are outlined instead.
-        if self._stipple_ok:
-            band_opts = {"fill": Theme.RED, "stipple": "gray50", "outline": ""}
+        if p.stipple_ok:
+            band_opts = {"fill": Theme.RED, "half": True}
         else:
-            band_opts = {"fill": "", "outline": Theme.RED, "width": 2}
+            band_opts = {"outline": Theme.RED, "width": 2}
         for z0, z1, runs in self._sel.bands(*self._extent()):
             for a, b in runs:
                 rect(a, z0, b, z1, **band_opts)
-        if self._stipple_ok:
+        if p.stipple_ok:
             # Outline the drawn rectangles: red = selected, amber = kept.
             for add, x0, z0, x1, z1 in self._sel.ops:
                 if add:
@@ -878,28 +1005,25 @@ class WorldMapWindow(tk.Toplevel):
                     rect(x0, z0, x1, z1, outline=Theme.AMBER_GLOW, width=1,
                          dash=(4, 3))
 
-        if self._detail_rect is not None and self._detail_wanted():
+        if on_canvas and self._detail_rect is not None and self._detail_wanted():
             x0, z0, x1, z1, _s = self._detail_rect
             rect(x0, z0, x1, z1, outline=Theme.CYAN, width=1, dash=(2, 4))
 
         if self._claims_var.get():
-            self._draw_claims(cw, ch)
+            self._draw_claims(p, cw, ch)
         if self._players_var.get():
-            self._draw_players(cw, ch)
+            self._draw_players(p, cw, ch)
 
         # Map centre — in-game coordinates are shown relative to it.
         mx = self._meta.get("map_size_x", 0) / 2 / CHUNK_SIZE
         mz = self._meta.get("map_size_z", 0) / 2 / CHUNK_SIZE
         x, y = self._to_screen(mx, mz)
         if -20 <= x <= cw + 20 and -20 <= y <= ch + 20:
-            c.create_line(x - 9, y, x + 10, y, fill=Theme.AMBER_GLOW, width=2,
-                          tags="overlay")
-            c.create_line(x, y - 9, x, y + 10, fill=Theme.AMBER_GLOW, width=2,
-                          tags="overlay")
-            c.create_text(x + 12, y - 12, text="0, 0", anchor=tk.SW,
-                          fill=Theme.AMBER_GLOW, font=self._app.F_SMALL,
-                          tags="overlay")
-        c.tag_raise(self._msg_item)
+            p.line(x - 9, y, x + 10, y, Theme.AMBER_GLOW, width=2)
+            p.line(x, y - 9, x, y + 10, Theme.AMBER_GLOW, width=2)
+            p.text(x + 12, y - 12, "0, 0", Theme.AMBER_GLOW, tk.SW)
+        if on_canvas:
+            self._canvas.tag_raise(self._msg_item)
 
     def retheme(self, remap) -> None:
         """After a theme change (see ui.widgets.retheme_tree): tool
@@ -1148,6 +1272,8 @@ class WorldMapWindow(tk.Toplevel):
     def _update_controls(self) -> None:
         self._delete_btn.set_enabled(self._busy is None and self._sel_area > 0)
         self._reload_btn.set_enabled(self._busy is None)
+        self._image_btn.set_enabled(self._base.grid is not None
+                                    and self._busy != "load")
         for btn in self._sel_buttons:
             btn.set_enabled(self._busy != "delete")
 

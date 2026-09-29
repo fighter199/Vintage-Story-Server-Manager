@@ -12,7 +12,8 @@ the checkout), boots it, and fails if:
   * any widget in a sidebar tab is cut off horizontally — past the tab's
     edge, squeezed, or hidden for lack of room — at 100 % or 130 % text,
   * the world map can't open a small synthetic savegame or its land
-    claim, or "Keep claims…" doesn't keep just the claim,
+    claim, "Keep claims…" doesn't keep just the claim, or the map can't
+    be saved as a PNG,
   * after a live theme change any colour of the previous theme is left
     anywhere (widgets, text tags, canvas items, button hover colours,
     ttk styles).
@@ -229,6 +230,21 @@ def main() -> int:
             elif [c.label for c in win._claims] != ["Smoke base"]:
                 failures.append(f"world map claims: {win._claims}")
             else:
+                import struct
+                for scope in ("view", "world"):
+                    out = os.path.join(os.path.dirname(app_dir), f"{scope}.png")
+                    saved = win._save_image(scope, out)
+                    want = win._export_sizes()[scope][:2]
+                    try:
+                        with open(out, "rb") as f:
+                            head = f.read(24)
+                        size = struct.unpack(">II", head[16:24])
+                    except (OSError, struct.error):
+                        size = None
+                    if saved != out or head[:8] != b"\x89PNG\r\n\x1a\n" \
+                            or size != tuple(want):
+                        failures.append(f"map image ({scope}) not saved "
+                                        f"correctly: {saved!r} {size}")
                 from tkinter import simpledialog
                 simpledialog.askinteger = lambda *a, **k: 0
                 win._keep_claims()
