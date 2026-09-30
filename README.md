@@ -378,9 +378,12 @@ Two ways to do it:
 - **Delete in place** — quicker for removing a small part of a big
   world. Works in batches of whole rows, so the journal stays small and
   a cancel never leaves a column half-deleted. The file keeps its size
-  (the server reuses the space for new terrain). Optionally zips the
-  world folder into the backup folder first; nothing is deleted if that
-  backup fails.
+  (the server reuses the space for new terrain).
+
+Either way the dialog offers **Backup first** — zip the world folder
+into the backup folder before deleting (ticked by default whenever a
+backup folder is set and has room); nothing is deleted if that backup
+fails.
 
 Either way: the server must be stopped (VSSM also refuses to start it
 until the job finishes), the map must be reloaded if the savegame

@@ -1330,7 +1330,7 @@ class WorldMapWindow(tk.Toplevel):
         self._drop_detail()
         app._world_edit_in_progress = True
         self._update_controls()
-        if opts["mode"] == "inplace" and opts["zip_backup"]:
+        if opts["zip_backup"]:
             self._sel_var.set("Backing up the world before deleting…")
             app._start_async_backup(
                 silent=False, reason="manual",
@@ -1442,8 +1442,6 @@ class WorldMapWindow(tk.Toplevel):
         def sync():
             rewrite = mode_var.get() == "rewrite"
             keep_chk.configure(state=tk.NORMAL if rewrite else tk.DISABLED)
-            zip_chk.configure(state=tk.NORMAL if not rewrite and can_zip
-                              else tk.DISABLED)
 
         radio("Rewrite into a smaller savegame", "rewrite", can_rewrite)
         _note(body, f"   Copies the ≈{fmt_size(keep)} you keep into a new file "
@@ -1461,18 +1459,24 @@ class WorldMapWindow(tk.Toplevel):
         _note(body, "   Quicker when removing a small part of a big world. The "
                     "file keeps its size; the server reuses the space for new "
                     "terrain.", Theme.AMBER, app)
-        zip_chk = TermCheckbutton(
-            body, f"   Zip the world folder into the backup folder first "
-                  f"(≈{fmt_size(file_size)} to zip)", zip_var,
-            font_spec=app.F_SMALL)
-        zip_chk.configure(disabledforeground=Theme.MUTED)
-        zip_chk.pack(fill=tk.X)
-        if not can_zip:
-            _note(body, f"      Unavailable: {why_no_zip}.", Theme.RED, app)
 
         TermCheckbutton(body, "Also delete map regions left empty (climate/"
                               "ore maps regenerate from the seed)",
                         regions_var, font_spec=app.F_SMALL).pack(fill=tk.X, pady=(10, 0))
+        tk.Label(body, text="BACKUP FIRST", fg=Theme.AMBER_GLOW,
+                 bg=Theme.BG_PANEL, font=app.F_HDR, anchor=tk.W
+                 ).pack(fill=tk.X, pady=(12, 0))
+        zip_chk = TermCheckbutton(
+            body, f"Zip the world folder into the backup folder before "
+                  f"deleting (≈{fmt_size(file_size)} to zip; nothing is "
+                  "deleted if the backup fails)", zip_var,
+            font_spec=app.F_SMALL)
+        zip_chk.configure(disabledforeground=Theme.MUTED)
+        zip_chk.pack(fill=tk.X)
+        if not can_zip:
+            zip_chk.configure(state=tk.DISABLED)
+            _note(body, f"   Unavailable: {why_no_zip}.", Theme.RED, app)
+
         tk.Label(body, justify=tk.LEFT, anchor=tk.W, wraplength=560,
                  fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL, font=app.F_SMALL,
                  text=("• Everything built, stored or tamed in these areas is "
@@ -1488,7 +1492,8 @@ class WorldMapWindow(tk.Toplevel):
 
         def confirm():
             rewrite = mode_var.get() == "rewrite"
-            has_backup = keep_orig_var.get() if rewrite else zip_var.get() and can_zip
+            zipped = zip_var.get() and can_zip
+            has_backup = zipped or (rewrite and keep_orig_var.get())
             if not has_backup and not messagebox.askyesno(
                     "No backup", "Delete without a backup? This can't be "
                     "undone.", icon="warning", parent=dlg):
@@ -1496,7 +1501,7 @@ class WorldMapWindow(tk.Toplevel):
             result.update(mode=mode_var.get(), regions=regions_var.get(),
                           protect=claimed if protect_var.get() else [],
                           keep_original=rewrite and keep_orig_var.get(),
-                          zip_backup=not rewrite and zip_var.get() and can_zip,
+                          zip_backup=zipped,
                           expected_size=keep)
             dlg.destroy()
 
