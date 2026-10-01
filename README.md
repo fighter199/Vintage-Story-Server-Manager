@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.6**
+Current version: **3.7**
 
 ## Feature highlights
 
@@ -559,6 +559,23 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.7 (October 2026)
+
+- **Backup before deleting chunks** — the world map's delete dialog
+  offers *Backup first* (zip the world folder) in both modes, ticked by
+  default; nothing is deleted if the backup fails.
+- **Export / import settings** — every profile, the app preferences and
+  your own COMMANDS entries in one file; importing only adds.
+- **Crash reports** — each unexpected server exit writes a report to
+  `logs/crash-reports/` with the exit code, who was online, a likely
+  cause, the game's crash log and the last 300 console lines.
+- **Mod checks** — *🩺 Check mods* finds missing or disabled
+  dependencies, mods needing a newer game, and duplicates; *▶ Start*
+  asks before starting into those problems.
+- **Under the hood** — `VSSM.py` and the MODS tab split into smaller
+  modules (`host/`, `ui/mods_browser.py`, `ui/mods_updates.py`); no
+  behaviour change.
 
 ### v3.6 (September 2026)
 
