@@ -10,6 +10,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from .profiles import ProfileBar
+from .settings_io import export_settings, import_settings
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermCheckbutton,
                       ScrollableFrame, flow_children,
@@ -262,3 +263,21 @@ def build_settings_tab(parent, app):
     TermButton(pad, "💾 Save Settings", app._save_profile_settings,
                variant="start", font_spec=app.F_BTN, padx=14, pady=6
                ).pack(pady=(14, 8))
+
+    # Move settings to another install (all profiles, preferences and
+    # your own COMMANDS entries in one file).
+    io_row = tk.Frame(pad, bg=Theme.BG_PANEL)
+    io_row.pack(fill=tk.X, padx=10, pady=(0, 8))
+    TermButton(io_row, "⇪ Export settings…", lambda: export_settings(app),
+               variant="amber", font_spec=app.F_SMALL, padx=8, pady=2
+               ).pack(side=tk.LEFT)
+    TermButton(io_row, "⇩ Import settings…", lambda: import_settings(app),
+               variant="amber", font_spec=app.F_SMALL, padx=8, pady=2
+               ).pack(side=tk.LEFT, padx=(6, 0))
+    flow_children(io_row)
+    auto_wrap(tk.Label(
+        pad, fg=Theme.MUTED, bg=Theme.BG_PANEL, font=app.F_SMALL,
+        text=("Export saves every profile, the app preferences and your "
+              "own COMMANDS entries to one file; import adds them to this "
+              "install (nothing here is deleted)."))
+    ).pack(anchor=tk.W, fill=tk.X, padx=10, pady=(0, 8))

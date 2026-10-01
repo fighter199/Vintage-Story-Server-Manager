@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.6**
+Current version: **3.7**
 
 ## Feature highlights
 
@@ -103,7 +103,8 @@ git push origin Main
 
 ```
 VSSM5/
-├── VSSM.py                 entry point + ServerManagerApp (Tk host)
+├── VSSM.py                 entry point + ServerManagerApp (Tk host):
+│                           startup, layout, settings, fonts, tabs
 ├── run_tests.py            pytest-free test runner (also runs a lint pass)
 ├── requirements.txt        optional extras + per-platform notes
 ├── vs_commands_builtin.json  command reference for the COMMANDS tab
@@ -118,17 +119,28 @@ VSSM5/
 │   ├── custom_commands.py  ChatCommandDispatcher, validation, import/export
 │   ├── autorun.py          AutorunScheduler — injectable clock/send, testable
 │   ├── player_timers.py    PlayerTimers — session + lifetime playtime
+│   ├── profiles.py         create/rename/delete/switch profiles
+│   ├── settings_transfer.py  settings export/import bundles
+│   ├── crash_report.py     crash report files for unexpected exits
+│   ├── processes.py        finding servers VSSM didn't start
+│   ├── updates.py          GitHub release check
 │   ├── utils.py            port check, backup/restore zip helpers, DPI
 │   └── world_db.py         .vcdbs reader: ChunkPos packing, height maps,
 │                           selection geometry, overview/detail loading,
 │                           in-place delete + rewrite-and-swap pruning
+├── host/                   ServerManagerApp's methods by area, as mixins:
+│                           header, console, players, server (process,
+│                           output, commands), backups, scheduling
 ├── ui/                     one module per tab + theme.py + widgets.py
-│                           (world_map.py = WORLD MAP tab + map window)
+│                           (world_map.py = WORLD MAP tab + map window;
+│                           tab_mods.py + mods_browser.py + mods_updates.py
+│                           = MODS tab)
 ├── backup/
 │   └── manager.py          BackupManager — async zip, /genbackup live path,
 │                           per-family retention, completion callbacks
 ├── mods/
 │   ├── inspector.py        LocalModInspector (modinfo from zip/dir/cs/dll)
+│   ├── checks.py           missing deps / game version / duplicate checks
 │   ├── moddb.py            ModDbClient (ModDB REST API, atomic downloads)
 │   └── moddb_cache.py      on-disk TTL cache for mod lookups
 └── tests/                  pytest-style suite for every pure-logic module
@@ -136,7 +148,7 @@ VSSM5/
 
 The engine modules (`core/`, `backup/manager.py`, `mods/`) have no Tk
 dependency — time and side-effects are injected, which is what keeps
-them unit-testable. UI code lives entirely under `ui/` and `VSSM.py`.
+them unit-testable. UI code lives under `ui/`, `host/` and `VSSM.py`.
 
 ## Backups
 
@@ -303,6 +315,20 @@ failed, live progress, and a cancel that works mid-download. Downloads
 stream to `<dest>.part` and are swapped into place with `os.replace`,
 so a failed download never leaves a half-written mod.
 
+**🩺 Check mods** reads every mod's `modinfo.json` and reports, in the
+console:
+
+- **problems** — a dependency that's missing or disabled, a mod that
+  needs a newer Vintage Story than the server (the version comes from
+  the newest savegame), the same mod installed twice;
+- **warnings** — a dependency older than required, a mod whose modinfo
+  couldn't be read;
+- **notes** — client-only mods (the server doesn't load them).
+
+**▶ Start** runs the same check first and, if there are problems, lists
+them and asks before starting. Restarts — manual, scheduled or
+automatic — don't wait on that question.
+
 ## The WORLD MAP tab
 
 Pick a savegame (the most recently written `.vcdbs` in the world
@@ -378,9 +404,12 @@ Two ways to do it:
 - **Delete in place** — quicker for removing a small part of a big
   world. Works in batches of whole rows, so the journal stays small and
   a cancel never leaves a column half-deleted. The file keeps its size
-  (the server reuses the space for new terrain). Optionally zips the
-  world folder into the backup folder first; nothing is deleted if that
-  backup fails.
+  (the server reuses the space for new terrain).
+
+Either way the dialog offers **Backup first** — zip the world folder
+into the backup folder before deleting (ticked by default whenever a
+backup folder is set and has room); nothing is deleted if that backup
+fails.
 
 Either way: the server must be stopped (VSSM also refuses to start it
 until the job finishes), the map must be reloaded if the savegame
@@ -403,6 +432,12 @@ removes chunks with few player edits automatically.
   (default 3) inside the crash window (default 600 s) disables
   auto-restart until you intervene. Relaunches also wait for the
   savegame lock to clear.
+- **Crash reports** — every unexpected exit writes
+  `logs/crash-reports/crash-<date>-<time>.txt`: exit code, uptime, who
+  was online, a one-line *likely cause* (the last .NET exception in the
+  output), any crash log the game wrote in its `Logs` folder, and the
+  last 300 console lines. The cause is also shown in the console and a
+  popup; the newest 20 reports are kept.
 
 ## Settings, profiles & themes
 
@@ -423,6 +458,13 @@ Switching waits until the server is stopped and no backup, restore or
 world-map edit is running, and offers to save settings you changed but
 didn't save. With more than one profile, the active one is named in
 the title bar and header.
+
+**Export / import settings** (SETTINGS, under *Save Settings*) moves
+VSSM to another install: one JSON file with every profile, the app
+preferences (theme, text size, crash-loop limits, …) and your own
+COMMANDS entries. Importing adds to what's there — profiles with a name
+you already have are replaced or imported as copies, your choice — and
+nothing is deleted. Window layout and chat logs aren't included.
 
 Settings writes are atomic (tmp →
 `os.replace`), the schema is versioned (currently v7) with automatic
@@ -487,7 +529,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, and
-utility helpers — 516 tests at the time of writing.
+utility helpers — 542 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
@@ -517,6 +559,23 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.7 (October 2026)
+
+- **Backup before deleting chunks** — the world map's delete dialog
+  offers *Backup first* (zip the world folder) in both modes, ticked by
+  default; nothing is deleted if the backup fails.
+- **Export / import settings** — every profile, the app preferences and
+  your own COMMANDS entries in one file; importing only adds.
+- **Crash reports** — each unexpected server exit writes a report to
+  `logs/crash-reports/` with the exit code, who was online, a likely
+  cause, the game's crash log and the last 300 console lines.
+- **Mod checks** — *🩺 Check mods* finds missing or disabled
+  dependencies, mods needing a newer game, and duplicates; *▶ Start*
+  asks before starting into those problems.
+- **Under the hood** — `VSSM.py` and the MODS tab split into smaller
+  modules (`host/`, `ui/mods_browser.py`, `ui/mods_updates.py`); no
+  behaviour change.
 
 ### v3.6 (September 2026)
 

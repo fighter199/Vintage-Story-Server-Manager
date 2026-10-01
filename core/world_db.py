@@ -58,6 +58,7 @@ MAPCHUNK_RAIN_HEIGHT_FIELD = 3
 MAPCHUNK_TERRAIN_HEIGHT_FIELD = 7
 SAVEGAME_MAP_SIZE_FIELDS = {1: "map_size_x", 2: "map_size_y", 3: "map_size_z"}
 SAVEGAME_LAND_CLAIMS_FIELD = 27          # repeated LandClaim (1.22)
+SAVEGAME_VERSION_FIELDS = (18, 21)       # game versions (created / last saved)
 
 
 class WorldDbError(Exception):
@@ -282,10 +283,20 @@ def parse_savegame_meta(blob) -> dict:
     meta = {"map_size_x": DEFAULT_MAP_SIZE_X,
             "map_size_y": DEFAULT_MAP_SIZE_Y,
             "map_size_z": DEFAULT_MAP_SIZE_Z}
+    versions = []
     for field, wire, value in iter_fields(blob):
         name = SAVEGAME_MAP_SIZE_FIELDS.get(field)
         if name and wire == 0 and 0 < value < (1 << 31):
             meta[name] = value
+        elif field in SAVEGAME_VERSION_FIELDS and wire == 2:
+            text = bytes(blob[value[0]:value[1]]).decode("utf-8", "replace")
+            if re.fullmatch(r"\d+(\.\d+)+(-[\w.]+)?", text):
+                versions.append(text)
+    if versions:
+        # The newest the world has been saved with — the server's version
+        # or older.
+        meta["game_version"] = max(versions, key=lambda v: tuple(
+            int(x) for x in re.findall(r"\d+", v.split("-")[0])))
     return meta
 
 
