@@ -62,6 +62,7 @@ from core.parsers import (classify_line, parse_player_event, split_client_list,
                            parse_role_response, parse_cron_expr, seconds_until_next,
                            parse_chat_message, strip_log_prefix)
 from core.profiles import PROFILE_FIELDS, unsaved_fields
+from mods.checks import check_mods, scan_mods_folder
 from core.crash_report import (build_report, find_game_crash_logs, summarize,
                                write_report)
 from core.updates import (PROJECT_URL, UpdateCheckError, fetch_latest_release,
@@ -724,7 +725,7 @@ class ServerManagerApp(tk.Tk):
         # Control buttons
         ctrl = tk.Frame(root_pad, bg=Theme.BG_DARK)
         ctrl.pack(fill=tk.X, pady=(0, 12))
-        self.btn_start   = TermButton(ctrl, "▶ Start",   self.start_server,  variant="start", font_spec=self.F_BTN)
+        self.btn_start   = TermButton(ctrl, "▶ Start",   self._start_server_checked, variant="start", font_spec=self.F_BTN)
         self.btn_stop    = TermButton(ctrl, "■ Stop",    self.stop_server,   variant="stop",  font_spec=self.F_BTN)
         self.btn_restart = TermButton(ctrl, "↻ Restart", self.restart_server,variant="amber", font_spec=self.F_BTN)
         self.btn_clear   = TermButton(ctrl, "✕ Clear",   self.clear_console, variant="clear", font_spec=self.F_BTN)
@@ -2196,6 +2197,76 @@ class ServerManagerApp(tk.Tk):
     # ------------------------------------------------------------------
     # Server control
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Mod checks (MODS → Check mods, and before a manual start)
+    # ------------------------------------------------------------------
+    def _server_game_version(self):
+        """The game version the newest savegame was saved with (the
+        server's version, or a little older), or None."""
+        try:
+            files = sorted(self._savegame_db_files(), key=os.path.getmtime)
+            if files:
+                from core.world_db import read_world_meta
+                return read_world_meta(files[-1]).get("game_version")
+        except Exception as e:
+            LOG.debug("game version unknown: %s", e)
+        return None
+
+    def _mod_problems(self) -> tuple:
+        folder = self.mods_folder_var.get().strip()
+        version = self._server_game_version()
+        return check_mods(scan_mods_folder(folder), version), version
+
+    def _report_mod_problems(self, problems, version) -> None:
+        tags = {"error": "error", "warn": "warn", "info": "system"}
+        vtext = f" (game {version})" if version else " (game version unknown)"
+        if not problems:
+            self.append_console(f"Mod check{vtext}: no problems found.", "success")
+            return
+        self.append_console(f"Mod check{vtext}: {len(problems)} finding(s):", "system")
+        for p in problems:
+            self.append_console(f"  [{p.level}] {p}", tags[p.level])
+
+    def check_mods_now(self):
+        """MODS → 🩺 Check mods."""
+        if not self.mods_folder_var.get().strip():
+            self._notify("Set the mods folder first (SETTINGS).", level="warn")
+            return
+        problems, version = self._mod_problems()
+        self._report_mod_problems(problems, version)
+        errors = sum(p.level == "error" for p in problems)
+        warns = sum(p.level == "warn" for p in problems)
+        if errors or warns:
+            self._notify(f"Mod check: {errors} problem(s), {warns} warning(s) — "
+                         "details in the console.", level="error" if errors else "warn",
+                         duration_ms=6000)
+        else:
+            self._notify("Mod check: no problems found.", level="success")
+
+    def _start_server_checked(self):
+        """The ▶ Start button: check the mods first and ask before
+        starting into a likely failure. (Restarts, scheduled and
+        automatic ones included, go straight to start_server.)"""
+        if not self.is_running and not self._shutdown_in_progress \
+                and self.mods_folder_var.get().strip():
+            try:
+                problems, version = self._mod_problems()
+            except Exception:
+                LOG.exception("mod check before start failed")
+                problems, version = [], None
+            errors = [p for p in problems if p.level == "error"]
+            if errors:
+                self._report_mod_problems(problems, version)
+                listing = "\n".join(f"• {p}" for p in errors[:8])
+                more = f"\n…and {len(errors) - 8} more" if len(errors) > 8 else ""
+                if not messagebox.askyesno(
+                        "Mod problems",
+                        f"{len(errors)} mod problem(s) will probably stop the "
+                        f"server from starting or crash it:\n\n{listing}{more}"
+                        "\n\nStart anyway?", icon="warning", parent=self):
+                    return
+        self.start_server()
+
     def start_server(self):
         if self.is_running:
             self._notify("Server is already running.", level="warn")

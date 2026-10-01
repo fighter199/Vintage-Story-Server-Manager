@@ -938,3 +938,16 @@ class TestLandClaims:
         assert [c.label for c in claims] == ["Base"]
         path2 = make_world(tmp_path / "plain.vcdbs", w=2, h=2)
         assert read_world_meta(path2)["claims"] == []
+
+
+class TestGameVersion:
+    def test_newest_of_the_version_fields(self):
+        blob = (f_varint(1, 1024000) + f_bytes(13, b"World")
+                + f_bytes(18, b"1.19.8") + f_bytes(21, b"1.22.2")
+                + f_bytes(22, b"Fighter199"))
+        assert parse_savegame_meta(blob)["game_version"] == "1.22.2"
+
+    def test_absent_or_garbage(self):
+        assert "game_version" not in parse_savegame_meta(f_varint(1, 5))
+        blob = f_bytes(18, b"not a version") + f_bytes(21, b"\xff\xfe")
+        assert "game_version" not in parse_savegame_meta(blob)

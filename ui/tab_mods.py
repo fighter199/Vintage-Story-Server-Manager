@@ -131,6 +131,7 @@ def _build_mods_installed_subtab(app: 'ServerManagerApp', parent):
         ("+ Add",           app.add_mod,                "amber"),
         ("✕ Remove",        app.remove_selected_mod,    "stop"),
         ("⟳ Check Updates", app.check_mod_updates,      "amber"),
+        ("🩺 Check mods",   app.check_mods_now,         "amber"),
         ("🌐 ModDB Page",   app.open_selected_mod_on_moddb,
                                                          "amber"),
     ]:

@@ -303,6 +303,20 @@ failed, live progress, and a cancel that works mid-download. Downloads
 stream to `<dest>.part` and are swapped into place with `os.replace`,
 so a failed download never leaves a half-written mod.
 
+**🩺 Check mods** reads every mod's `modinfo.json` and reports, in the
+console:
+
+- **problems** — a dependency that's missing or disabled, a mod that
+  needs a newer Vintage Story than the server (the version comes from
+  the newest savegame), the same mod installed twice;
+- **warnings** — a dependency older than required, a mod whose modinfo
+  couldn't be read;
+- **notes** — client-only mods (the server doesn't load them).
+
+**▶ Start** runs the same check first and, if there are problems, lists
+them and asks before starting. Restarts — manual, scheduled or
+automatic — don't wait on that question.
+
 ## The WORLD MAP tab
 
 Pick a savegame (the most recently written `.vcdbs` in the world
@@ -503,7 +517,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, and
-utility helpers — 532 tests at the time of writing.
+utility helpers — 542 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
