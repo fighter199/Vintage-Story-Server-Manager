@@ -132,7 +132,9 @@ VSSM5/
 │                           header, console, players, server (process,
 │                           output, commands), backups, scheduling
 ├── ui/                     one module per tab + theme.py + widgets.py
-│                           (world_map.py = WORLD MAP tab + map window)
+│                           (world_map.py = WORLD MAP tab + map window;
+│                           tab_mods.py + mods_browser.py + mods_updates.py
+│                           = MODS tab)
 ├── backup/
 │   └── manager.py          BackupManager — async zip, /genbackup live path,
 │                           per-family retention, completion callbacks
