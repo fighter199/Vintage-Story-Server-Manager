@@ -427,6 +427,13 @@ world-map edit is running, and offers to save settings you changed but
 didn't save. With more than one profile, the active one is named in
 the title bar and header.
 
+**Export / import settings** (SETTINGS, under *Save Settings*) moves
+VSSM to another install: one JSON file with every profile, the app
+preferences (theme, text size, crash-loop limits, …) and your own
+COMMANDS entries. Importing adds to what's there — profiles with a name
+you already have are replaced or imported as copies, your choice — and
+nothing is deleted. Window layout and chat logs aren't included.
+
 Settings writes are atomic (tmp →
 `os.replace`), the schema is versioned (currently v7) with automatic
 migration and a timestamped pre-migration `.bak`. The persisted
@@ -490,7 +497,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, and
-utility helpers — 516 tests at the time of writing.
+utility helpers — 526 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
