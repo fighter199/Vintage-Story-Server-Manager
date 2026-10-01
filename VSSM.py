@@ -62,6 +62,8 @@ from core.parsers import (classify_line, parse_player_event, split_client_list,
                            parse_role_response, parse_cron_expr, seconds_until_next,
                            parse_chat_message, strip_log_prefix)
 from core.profiles import PROFILE_FIELDS, unsaved_fields
+from core.crash_report import (build_report, find_game_crash_logs, summarize,
+                               write_report)
 from core.updates import (PROJECT_URL, UpdateCheckError, fetch_latest_release,
                           is_newer)
 from core.settings import (load_settings, save_settings, get_active_profile,
@@ -69,7 +71,8 @@ from core.settings import (load_settings, save_settings, get_active_profile,
                             normalize_window_layout, fit_geometry)
 from core.custom_commands import ChatCommandDispatcher
 from core.command_files import load_commands, ensure_user_file, USER_FILE
-from core.processes import find_external_servers, describe as describe_servers
+from core.processes import (find_external_servers, default_data_path,
+                            describe as describe_servers)
 from core.utils import (is_port_free, find_vs_port, open_in_file_manager,
                         open_in_editor,
                          fmt_size, enable_windows_dpi_awareness)
@@ -2799,6 +2802,7 @@ class ServerManagerApp(tk.Tk):
 
     def _on_process_exit_unexpected(self):
         was_stopping = self._shutdown_in_progress
+        started, proc = self.start_time, self.server_process
         self.is_running = False
         self.start_time = None
         self.cancel_autosave_job()
@@ -2814,6 +2818,7 @@ class ServerManagerApp(tk.Tk):
         self._update_buttons_running(False)
         self._set_status("OFFLINE", dot="off")
         self.append_console("Server process exited.", "warn")
+        self._write_crash_report(started, proc)
         self._record_crash()
         self._players = []
         self._rerender_players()
@@ -2837,6 +2842,45 @@ class ServerManagerApp(tk.Tk):
             self.append_console("Auto-restart enabled, waiting for savegame lock to clear…", "system")
             self.after(5000, lambda: self._wait_for_savegame_unlocked_then(
                 self.start_server, context="auto-restart"))
+
+    def _write_crash_report(self, started, proc) -> str | None:
+        """Save logs/crash-reports/crash-<time>.txt for an unexpected exit
+        and say where it is, with a one-line guess at the cause."""
+        exit_code = None
+        try:
+            if proc is not None:
+                exit_code = proc.wait(timeout=2)
+        except Exception:
+            pass
+        exe = self.server_path_var.get().strip()
+        world = self.world_folder_var.get().strip()
+        folders = [os.path.join(os.path.dirname(os.path.abspath(world)), "Logs")
+                   if world else "",
+                   os.path.join(default_data_path(), "Logs"),
+                   os.path.join(os.path.dirname(exe), "Logs") if exe else ""]
+        console = [f"[{ts}] {text}" for ts, text, _tag in self.all_output_lines]
+        try:
+            game_logs = find_game_crash_logs(
+                folders, since=(started or time.time()) - 5)
+            text = build_report(
+                exit_code=exit_code, started=started, ended=time.time(),
+                console=console, players=list(self._players),
+                game_logs=game_logs, app_version=APP_VERSION, server_path=exe)
+            from core.constants import log_dir
+            path = write_report(log_dir(), text)
+        except Exception:
+            LOG.exception("writing the crash report failed")
+            return None
+        cause = summarize([t for _ts, t, _tag in self.all_output_lines
+                           if t != "Server process exited."])
+        code = f" (exit code {exit_code})" if exit_code is not None else ""
+        self.append_console(f"Crash report saved{code}: {path}", "error")
+        if cause:
+            self.append_console(f"Likely cause: {cause}", "error")
+        self._notify(f"Server crashed{code}. " + (f"Likely cause: {cause[:120]}"
+                     if cause else "See the crash report in logs/crash-reports."),
+                     level="error", duration_ms=10000)
+        return path
 
     def _record_crash(self):
         now = time.time()

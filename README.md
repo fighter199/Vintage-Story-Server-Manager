@@ -406,6 +406,12 @@ removes chunks with few player edits automatically.
   (default 3) inside the crash window (default 600 s) disables
   auto-restart until you intervene. Relaunches also wait for the
   savegame lock to clear.
+- **Crash reports** — every unexpected exit writes
+  `logs/crash-reports/crash-<date>-<time>.txt`: exit code, uptime, who
+  was online, a one-line *likely cause* (the last .NET exception in the
+  output), any crash log the game wrote in its `Logs` folder, and the
+  last 300 console lines. The cause is also shown in the console and a
+  popup; the newest 20 reports are kept.
 
 ## Settings, profiles & themes
 
@@ -497,7 +503,7 @@ The suite covers every pure-logic module — parsers, custom-commands
 engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, and
-utility helpers — 526 tests at the time of writing.
+utility helpers — 532 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
