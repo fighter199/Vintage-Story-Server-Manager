@@ -36,7 +36,7 @@ INCLUDE_FILES = ["VSSM.py", "vs_commands_builtin.json", "requirements.txt",
 # out of the zip): the ignore list and the workflow that turns each new
 # version on Main into a GitHub Release.
 GIT_ONLY_FILES = [".gitignore", ".github/workflows/release.yml"]
-INCLUDE_PACKAGES = ["core", "ui", "backup", "mods"]
+INCLUDE_PACKAGES = ["core", "ui", "backup", "mods", "host"]
 
 
 def app_version() -> str:

@@ -103,7 +103,8 @@ git push origin Main
 
 ```
 VSSM5/
-├── VSSM.py                 entry point + ServerManagerApp (Tk host)
+├── VSSM.py                 entry point + ServerManagerApp (Tk host):
+│                           startup, layout, settings, fonts, tabs
 ├── run_tests.py            pytest-free test runner (also runs a lint pass)
 ├── requirements.txt        optional extras + per-platform notes
 ├── vs_commands_builtin.json  command reference for the COMMANDS tab
@@ -118,10 +119,18 @@ VSSM5/
 │   ├── custom_commands.py  ChatCommandDispatcher, validation, import/export
 │   ├── autorun.py          AutorunScheduler — injectable clock/send, testable
 │   ├── player_timers.py    PlayerTimers — session + lifetime playtime
+│   ├── profiles.py         create/rename/delete/switch profiles
+│   ├── settings_transfer.py  settings export/import bundles
+│   ├── crash_report.py     crash report files for unexpected exits
+│   ├── processes.py        finding servers VSSM didn't start
+│   ├── updates.py          GitHub release check
 │   ├── utils.py            port check, backup/restore zip helpers, DPI
 │   └── world_db.py         .vcdbs reader: ChunkPos packing, height maps,
 │                           selection geometry, overview/detail loading,
 │                           in-place delete + rewrite-and-swap pruning
+├── host/                   ServerManagerApp's methods by area, as mixins:
+│                           header, console, players, server (process,
+│                           output, commands), backups, scheduling
 ├── ui/                     one module per tab + theme.py + widgets.py
 │                           (world_map.py = WORLD MAP tab + map window)
 ├── backup/
@@ -129,6 +138,7 @@ VSSM5/
 │                           per-family retention, completion callbacks
 ├── mods/
 │   ├── inspector.py        LocalModInspector (modinfo from zip/dir/cs/dll)
+│   ├── checks.py           missing deps / game version / duplicate checks
 │   ├── moddb.py            ModDbClient (ModDB REST API, atomic downloads)
 │   └── moddb_cache.py      on-disk TTL cache for mod lookups
 └── tests/                  pytest-style suite for every pure-logic module
@@ -136,7 +146,7 @@ VSSM5/
 
 The engine modules (`core/`, `backup/manager.py`, `mods/`) have no Tk
 dependency — time and side-effects are injected, which is what keeps
-them unit-testable. UI code lives entirely under `ui/` and `VSSM.py`.
+them unit-testable. UI code lives under `ui/`, `host/` and `VSSM.py`.
 
 ## Backups
 
