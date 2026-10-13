@@ -103,8 +103,9 @@ class DiscordTab:
         pad = 8
 
         def label(text, pady=(10, 1), parent=body):
-            tk.Label(parent, text=text, fg=Theme.AMBER_DIM, bg=Theme.BG_PANEL,
-                     font=F_SMALL).pack(anchor=tk.W, padx=pad, pady=pady)
+            auto_wrap(tk.Label(parent, text=text, fg=Theme.AMBER_DIM,
+                               bg=Theme.BG_PANEL, font=F_SMALL)
+                      ).pack(fill=tk.X, padx=pad, pady=pady)
 
         def hint(text, pady=(1, 0), parent=body):
             auto_wrap(tk.Label(parent, text=text, fg=Theme.MUTED,
@@ -136,7 +137,7 @@ class DiscordTab:
              "anyone with it can post to the channel.")
 
         # Address
-        label("SERVER ADDRESS  (blank = auto-detect public IP):")
+        label("SERVER ADDRESS  (blank = auto-detect):")
         self._addr_var = tk.StringVar()
         TermEntry(body, textvariable=self._addr_var,
                   font_spec=F_NORMAL).pack(fill=tk.X, padx=pad, ipady=3)
@@ -146,10 +147,9 @@ class DiscordTab:
                    variant="amber", font_spec=F_SMALL,
                    padx=8, pady=3).pack(side=tk.LEFT)
         self._detected_var = tk.StringVar(value="")
-        tk.Label(addr_row, textvariable=self._detected_var,
-                 fg=Theme.MUTED, bg=Theme.BG_PANEL,
-                 font=F_SMALL).pack(side=tk.LEFT, padx=(8, 0))
-        flow_children(addr_row)
+        auto_wrap(tk.Label(body, textvariable=self._detected_var,
+                           fg=Theme.MUTED, bg=Theme.BG_PANEL, font=F_SMALL)
+                  ).pack(fill=tk.X, padx=pad, pady=(2, 0))
         hint("Use a hostname (e.g. play.example.com) to hide your raw IP. "
              "The port from serverconfig.json is appended automatically. "
              "Auto-detect asks api.ipify.org for your public address.")
@@ -168,10 +168,10 @@ class DiscordTab:
         self._interval_var = tk.StringVar(value="5")
         TermEntry(int_row, textvariable=self._interval_var, width=6,
                   font_spec=F_NORMAL).pack(side=tk.LEFT, padx=6, ipady=2)
-        tk.Label(int_row, text="minutes while running (0 = only on events)",
-                 fg=Theme.MUTED, bg=Theme.BG_PANEL,
+        tk.Label(int_row, text="min", fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=F_SMALL).pack(side=tk.LEFT)
         flow_children(int_row, spacing=6)
+        hint("While the server runs. 0 = only post on the events below.")
 
         # Triggers
         label("POST WHEN:", pady=(10, 0))
@@ -215,11 +215,10 @@ class DiscordTab:
         self._map_interval_var = tk.StringVar(value="60")
         TermEntry(map_int_row, textvariable=self._map_interval_var, width=6,
                   font_spec=F_NORMAL).pack(side=tk.LEFT, padx=6, ipady=2)
-        tk.Label(map_int_row,
-                 text="minutes while running (skipped if nothing changed)",
-                 fg=Theme.MUTED, bg=Theme.BG_PANEL,
+        tk.Label(map_int_row, text="min", fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=F_SMALL).pack(side=tk.LEFT)
         flow_children(map_int_row, spacing=6)
+        hint("While the server runs. Skipped when nothing has changed.")
 
         # Only one of these two boxes is shown, per the source picked.
         self._map_boxes_anchor = tk.Frame(body, bg=Theme.BG_PANEL)
@@ -272,14 +271,13 @@ class DiscordTab:
         self._map_wait_var = tk.StringVar(value="30")
         TermEntry(wait_row, textvariable=self._map_wait_var, width=6,
                   font_spec=F_NORMAL).pack(side=tk.LEFT, padx=6, ipady=2)
-        tk.Label(wait_row, text="seconds for the export to finish, "
-                                "then upload",
-                 fg=Theme.MUTED, bg=Theme.BG_PANEL,
+        tk.Label(wait_row, text="s", fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=F_SMALL).pack(side=tk.LEFT)
         flow_children(wait_row, spacing=6)
-        hint("Use your map mod's export command here if it only renders on "
-             "demand. Leave blank if the mod keeps the image up to date "
-             "on its own.", parent=fb)
+        hint("Time for the export to finish before uploading. Use your map "
+             "mod's export command if it only renders on demand; leave it "
+             "blank if the mod keeps the image up to date on its own.",
+             parent=fb)
         self._sync_map_source()
 
         # Buttons + result line
