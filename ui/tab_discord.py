@@ -16,7 +16,8 @@ from tkinter import filedialog, ttk
 
 from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermCheckbutton,
-                      ScrollableFrame, auto_wrap, panel_header)
+                      ScrollableFrame, auto_wrap, flow_children,
+                      panel_header)
 from core.discord_status import validate_webhook_url
 
 # Display label <-> config value for the update-mode combobox
@@ -114,9 +115,9 @@ class DiscordTab:
              "channel. Settings are per-profile.", pady=(4, 0))
 
         self._enabled_var = tk.BooleanVar(value=False)
-        TermCheckbutton(body, "Enable Discord status updates",
-                        self._enabled_var, font_spec=F_NORMAL
-                        ).pack(anchor=tk.W, padx=pad, pady=(8, 2))
+        auto_wrap(TermCheckbutton(body, "Enable Discord status updates",
+                                  self._enabled_var, font_spec=F_NORMAL)
+                  ).pack(fill=tk.X, padx=pad, pady=(8, 2))
 
         # Webhook URL
         label("CHANNEL WEBHOOK URL:")
@@ -148,6 +149,7 @@ class DiscordTab:
         tk.Label(addr_row, textvariable=self._detected_var,
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=F_SMALL).pack(side=tk.LEFT, padx=(8, 0))
+        flow_children(addr_row)
         hint("Use a hostname (e.g. play.example.com) to hide your raw IP. "
              "The port from serverconfig.json is appended automatically. "
              "Auto-detect asks api.ipify.org for your public address.")
@@ -169,6 +171,7 @@ class DiscordTab:
         tk.Label(int_row, text="minutes while running (0 = only on events)",
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=F_SMALL).pack(side=tk.LEFT)
+        flow_children(int_row, spacing=6)
 
         # Triggers
         label("POST WHEN:", pady=(10, 0))
@@ -182,19 +185,19 @@ class DiscordTab:
             ("A player joins or leaves (batched over 10 s)",
              self._on_players_var),
         ]:
-            TermCheckbutton(body, text, var, font_spec=F_SMALL
-                            ).pack(anchor=tk.W, padx=pad + 8, pady=1)
-        TermCheckbutton(body, "Include the names of online players",
-                        self._names_var, font_spec=F_SMALL
-                        ).pack(anchor=tk.W, padx=pad, pady=(8, 2))
+            auto_wrap(TermCheckbutton(body, text, var, font_spec=F_SMALL)
+                      ).pack(fill=tk.X, padx=(pad + 8, pad), pady=1)
+        auto_wrap(TermCheckbutton(body, "Include the names of online players",
+                                  self._names_var, font_spec=F_SMALL)
+                  ).pack(fill=tk.X, padx=pad, pady=(8, 2))
 
         # Map snapshots
         tk.Frame(body, bg=Theme.BORDER, height=1).pack(
             fill=tk.X, padx=pad, pady=(12, 4))
         self._map_enabled_var = tk.BooleanVar(value=False)
-        TermCheckbutton(body, "Post a map image periodically",
-                        self._map_enabled_var, font_spec=F_NORMAL
-                        ).pack(anchor=tk.W, padx=pad, pady=(4, 0))
+        auto_wrap(TermCheckbutton(body, "Post a map image periodically",
+                                  self._map_enabled_var, font_spec=F_NORMAL)
+                  ).pack(fill=tk.X, padx=pad, pady=(4, 0))
         label("MAP SOURCE:", pady=(8, 1))
         self._map_source_var = tk.StringVar(value=_SOURCE_LABELS[0])
         source_menu = ttk.Combobox(body, textvariable=self._map_source_var,
@@ -216,6 +219,7 @@ class DiscordTab:
                  text="minutes while running (skipped if nothing changed)",
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=F_SMALL).pack(side=tk.LEFT)
+        flow_children(map_int_row, spacing=6)
 
         # Only one of these two boxes is shown, per the source picked.
         self._map_boxes_anchor = tk.Frame(body, bg=Theme.BG_PANEL)
@@ -230,10 +234,10 @@ class DiscordTab:
              "is safe while the server runs; big worlds take a little "
              "while to render.", pady=(6, 0), parent=sg)
         self._map_mark_var = tk.BooleanVar(value=True)
-        TermCheckbutton(sg, "Mark online players (at their last-saved "
-                            "position)",
-                        self._map_mark_var, font_spec=F_SMALL
-                        ).pack(anchor=tk.W, padx=pad, pady=(6, 0))
+        auto_wrap(TermCheckbutton(sg, "Mark online players (at their "
+                                      "last-saved position)",
+                                  self._map_mark_var, font_spec=F_SMALL)
+                  ).pack(fill=tk.X, padx=pad, pady=(6, 0))
 
         # -- map-mod image
         fb = tk.Frame(self._map_boxes_anchor, bg=Theme.BG_PANEL)
@@ -272,6 +276,7 @@ class DiscordTab:
                                 "then upload",
                  fg=Theme.MUTED, bg=Theme.BG_PANEL,
                  font=F_SMALL).pack(side=tk.LEFT)
+        flow_children(wait_row, spacing=6)
         hint("Use your map mod's export command here if it only renders on "
              "demand. Leave blank if the mod keeps the image up to date "
              "on its own.", parent=fb)
@@ -292,6 +297,7 @@ class DiscordTab:
         TermButton(btn_row, "New Messages", self._on_new_message,
                    variant="amber", font_spec=F_SMALL,
                    padx=10, pady=4).pack(side=tk.LEFT)
+        flow_children(btn_row, spacing=4)
         hint("Post Now / Post Map Now save first. New Messages forgets the "
              "status and map messages being edited, so the next updates "
              "post fresh ones.")
