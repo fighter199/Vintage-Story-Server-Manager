@@ -168,7 +168,7 @@ class ProfileBar:
         if chat_tab is not None:
             chat_tab._store = app._chat_store
             chat_tab.reload_from_store()
-        for attr in ("_custom_cmds_tab", "_autorun_tab"):
+        for attr in ("_custom_cmds_tab", "_autorun_tab", "_discord_tab"):
             tab = getattr(app, attr, None)
             if tab is not None:
                 tab.reload_from_settings()

@@ -185,6 +185,25 @@ def save_player_totals(settings: dict, totals: dict) -> None:
     profile = get_active_profile(settings)
     profile["player_totals"] = dict(totals or {})
 
+
+# -----------------------------------------------------------------------
+# Discord status config (per-profile — each server posts to its own
+# channel)
+# -----------------------------------------------------------------------
+def load_discord_config(settings: dict) -> dict:
+    """Return a normalized copy of the active profile's Discord config.
+    Missing / malformed config yields the defaults (feature disabled)."""
+    from .discord_status import normalize_config
+    profile = get_active_profile(settings)
+    return normalize_config(profile.get("discord"))
+
+
+def save_discord_config(settings: dict, cfg: dict) -> None:
+    """Persist the Discord config into the active profile (in-place)."""
+    from .discord_status import normalize_config
+    profile = get_active_profile(settings)
+    profile["discord"] = normalize_config(cfg)
+
 # -----------------------------------------------------------------------
 # Schema migration
 # -----------------------------------------------------------------------

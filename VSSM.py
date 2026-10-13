@@ -78,6 +78,7 @@ from core.chat_log import (ChatLogStore)
 from core.player_timers import PlayerTimers
 from ui.tab_autorun import AutorunTab
 from ui.world_map import WorldMapTab
+from ui.tab_discord import DiscordTab
 from core.autorun import AutorunScheduler
 from mods.moddb import ModDbClient
 from backup import BackupManager
@@ -87,6 +88,7 @@ from host.players import PlayersMixin
 from host.server import ServerMixin
 from host.backups import BackupsMixin
 from host.scheduling import SchedulingMixin
+from host.discord import DiscordMixin
 
 # Optional psutil
 try:
@@ -208,7 +210,7 @@ class BootSplash(tk.Toplevel):
 # ======================================================================
 # Main Application
 # ======================================================================
-class ServerManagerApp(HeaderMixin, ConsoleMixin, PlayersMixin, ServerMixin, BackupsMixin, SchedulingMixin, tk.Tk):
+class ServerManagerApp(HeaderMixin, ConsoleMixin, PlayersMixin, ServerMixin, BackupsMixin, SchedulingMixin, DiscordMixin, tk.Tk):
 
     # ---- Configurable crash-loop defaults (now overridden by settings) ----
     CRASH_WINDOW_SECS = 600
@@ -389,6 +391,9 @@ class ServerManagerApp(HeaderMixin, ConsoleMixin, PlayersMixin, ServerMixin, Bac
         )
         self._autorun_tab: "AutorunTab | None" = None
 
+        # Discord status poster (host/discord.py).
+        self._init_discord()
+
         # Tk variables
         self.server_path_var          = tk.StringVar()
         self.command_var              = tk.StringVar()
@@ -463,6 +468,7 @@ class ServerManagerApp(HeaderMixin, ConsoleMixin, PlayersMixin, ServerMixin, Bac
         self._tick_player_timers()    # 1Hz label refresh
         self._schedule_timer_flush()  # 60s persistence flush
         self._tick_autorun()  # 1Hz scheduler tick (no-op while stopped)
+        self._tick_discord()  # 1Hz Discord status tick
         # Scale shortcuts
         self.bind_all("<Control-equal>",      lambda _: self._bump_ui_scale(+0.1))
         self.bind_all("<Control-plus>",       lambda _: self._bump_ui_scale(+0.1))
@@ -811,6 +817,11 @@ class ServerManagerApp(HeaderMixin, ConsoleMixin, PlayersMixin, ServerMixin, Bac
         world_map_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
         self._tab_strip.add(world_map_frame, text="WORLD MAP")
         self._world_map_tab = WorldMapTab(world_map_frame, self)
+
+        # Discord: post address, player count and map images to a channel.
+        discord_frame = tk.Frame(self.notebook, bg=Theme.BG_PANEL)
+        self._tab_strip.add(discord_frame, text="DISCORD")
+        self._discord_tab = DiscordTab(discord_frame, self)
         # Route every dispatch (fired or skipped) into the tab's audit
         # log. Use after_idle so audit updates always happen on the Tk
         # main thread, even when dispatch is invoked from _process_queue.
@@ -1625,9 +1636,10 @@ class ServerManagerApp(HeaderMixin, ConsoleMixin, PlayersMixin, ServerMixin, Bac
             return
         self.cancel_autosave_job()
         self._cancel_cron_schedule()
-        self.destroy()
+        self._final_destroy()
 
     def _final_destroy(self):
+        self._discord_flush_on_exit()
         try:
             self.destroy()
         except Exception:

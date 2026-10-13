@@ -61,6 +61,26 @@ def find_vs_port(server_dir: str) -> int:
     return 42420
 
 
+def read_server_info(server_dir: str) -> dict:
+    """Return {"name", "port", "max_clients"} from serverconfig.json.
+    Missing values come back as ""/default port/None."""
+    info = {"name": "", "port": find_vs_port(server_dir), "max_clients": None}
+    candidate = os.path.join(server_dir, "serverconfig.json")
+    try:
+        with open(candidate, "r", encoding="utf-8", errors="replace") as f:
+            data = parse_json5_ish(f.read())
+        if isinstance(data, dict):
+            name = data.get("ServerName") or data.get("serverName")
+            if isinstance(name, str):
+                info["name"] = name.strip()
+            maxc = data.get("MaxClients") or data.get("maxClients")
+            if isinstance(maxc, int) and maxc > 0:
+                info["max_clients"] = maxc
+    except Exception:
+        pass
+    return info
+
+
 # -----------------------------------------------------------------------
 # OS file manager
 # -----------------------------------------------------------------------
