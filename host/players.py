@@ -498,6 +498,7 @@ class PlayersMixin:
         self.player_count_var.set(str(n))
         if hasattr(self, "player_header_label") and self.player_header_label:
             self.player_header_label.configure(text=f"{n} online")
+        self._discord_players_changed()
 
 
     # ------------------------------------------------------------------

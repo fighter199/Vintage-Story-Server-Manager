@@ -207,6 +207,7 @@ class ServerMixin:
             self._autorun_scheduler.start()
         except Exception:
             LOG.exception("autorun scheduler start failed")
+        self._discord_on_server_start()
         # Fresh queue per run — a stale end-of-stream marker left over
         # from the previous run's reader thread must never be misread
         # as THIS process exiting (see _read_output).
@@ -475,6 +476,7 @@ class ServerMixin:
             self._autorun_scheduler.stop()
         except Exception:
             pass
+        self._discord_on_server_stop("stop")
         self._cancel_cron_schedule()
         cbs = self._shutdown_callbacks[:]
         self._shutdown_callbacks.clear()
@@ -758,6 +760,7 @@ class ServerMixin:
         self._player_roles.clear()
         self.server_process = None
         self._psutil_proc = None
+        self._discord_on_server_stop("crash")
         if self.autorestart_var.get():
             if self._crash_loop_tripped():
                 msg = (f"Auto-restart disabled: {self.CRASH_LIMIT}+ crashes "

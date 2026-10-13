@@ -104,6 +104,11 @@ def create_profile(settings: dict, name: str, copy_from: str | None = None) -> s
             raise ProfileError(f'There is no profile called "{copy_from}".')
         new = copy.deepcopy(profiles[copy_from])
         new["player_totals"] = {}
+        # The copy must post its own Discord cards, not keep editing
+        # the original server's.
+        if isinstance(new.get("discord"), dict):
+            new["discord"]["message_id"] = ""
+            new["discord"]["map_message_id"] = ""
     else:
         new = {"custom_commands": [], "autorun_rules": [], "player_totals": {}}
     profiles[clean] = new

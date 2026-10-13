@@ -34,6 +34,10 @@ Current version: **3.7**
   run-on-start / run-on-save / pause-when-empty gates.
 - **Chat log** — per-group chat history that persists across launches,
   including a subtab for proximity / roleplay-mod chat.
+- **Discord status** — posts the server's address and live player
+  count to a Discord channel through a webhook (one self-updating
+  status card, or a new message per update), plus periodic world-map
+  images rendered straight from the savegame.
 - **Mod manager** — inspect installed mods, browse the ModDB in-app,
   and run a parallel, cached update check with a per-mod picker,
   game-version compatibility filter, and atomic downloads.
@@ -118,6 +122,9 @@ VSSM5/
 │   ├── chat_log.py         ChatLogStore — per-group ring buffers + persistence
 │   ├── custom_commands.py  ChatCommandDispatcher, validation, import/export
 │   ├── autorun.py          AutorunScheduler — injectable clock/send, testable
+│   ├── discord_status.py   Discord webhook client, status/map scheduler,
+│   │                       background worker, public-IP lookup
+│   ├── map_render.py       savegame → PNG (world_db renderer, no Tk)
 │   ├── player_timers.py    PlayerTimers — session + lifetime playtime
 │   ├── profiles.py         create/rename/delete/switch profiles
 │   ├── settings_transfer.py  settings export/import bundles
@@ -130,7 +137,8 @@ VSSM5/
 │                           in-place delete + rewrite-and-swap pruning
 ├── host/                   ServerManagerApp's methods by area, as mixins:
 │                           header, console, players, server (process,
-│                           output, commands), backups, scheduling
+│                           output, commands), backups, scheduling,
+│                           discord
 ├── ui/                     one module per tab + theme.py + widgets.py
 │                           (world_map.py = WORLD MAP tab + map window;
 │                           tab_mods.py + mods_browser.py + mods_updates.py
@@ -420,6 +428,41 @@ Anything built, stored or tamed in a deleted area is lost; players who
 logged out there may log back in underground.
 The server's own `/db prune` command is a complementary tool — it
 removes chunks with few player edits automatically.
+
+## The DISCORD tab
+
+Posts a status card — server name, 🟢/🔴 status, players (`3 / 16`,
+using `MaxClients` from `serverconfig.json`), uptime, the connect
+address, and optionally who's online — to a Discord channel. No bot or
+extra packages: create a webhook in Discord (**Channel → Edit Channel →
+Integrations → Webhooks → New Webhook → Copy Webhook URL**), paste it
+in, tick **Enable**, and **💾 Save**. **▶ Post Now** sends a test.
+
+- **Address** — leave blank to auto-detect your public IP
+  (via api.ipify.org, re-checked every 10 min), or enter a hostname
+  such as `play.example.com`. The port from `serverconfig.json` is
+  appended automatically.
+- **Update mode** — *Edit one status message* (default) keeps a single
+  card in the channel up to date; *Post a new message* posts each
+  update fresh. **New Messages** forgets the cards being edited.
+- **When** — on server start, on stop/crash (card turns red), on player
+  join/leave (batched over 10 s), and every N minutes while running
+  (0 = events only).
+- **Map images** — every N minutes while the server runs, and on
+  **🗺 Post Map Now**. The default source is the built-in renderer: the
+  same shaded-relief map as the WORLD MAP tab, read from the newest
+  `.vcdbs` in the world folder (safe while the server runs). Small
+  worlds are rendered at full detail and enlarged; big ones are sampled
+  and shrunk to fit Discord's 10 MB limit. Online players can be
+  marked at their last-saved position. Alternatively, pick *Image
+  exported by a map mod* and point it at the mod's image file or
+  folder, with an optional export command VSSM sends to the console
+  first. Unchanged maps are skipped.
+
+Settings are per-profile, so each server can post to its own channel;
+a duplicated profile starts with its own cards. The webhook URL is
+stored in `vserverman_settings.json` (and in settings exports) — treat
+it like a password.
 
 ## Scheduling
 
