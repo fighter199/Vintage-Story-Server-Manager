@@ -604,6 +604,19 @@ containing `VSSM.py`.
 
 ## Recent changes
 
+### v3.8 (October 2026)
+
+- **Discord status** — a new DISCORD tab posts the server's address and
+  live player count to a Discord channel through a webhook: one
+  self-updating status card (or a new message per update), refreshed
+  on start, stop/crash, player join/leave and a timer. The address is
+  your auto-detected public IP or a hostname you set.
+- **World map in Discord** — posts the world map on a timer or on
+  demand, rendered straight from the live savegame with the WORLD MAP
+  renderer (no mod needed), with online players marked. An image
+  exported by a map mod can be used instead.
+- Settings are per profile; see *The DISCORD tab*.
+
 ### v3.7 (October 2026)
 
 - **Backup before deleting chunks** — the world map's delete dialog
