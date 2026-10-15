@@ -388,15 +388,20 @@ class FakeClient:
         self.post_error = post_error
         self.edits = []
         self.posts = []
-    def edit(self, message_id, payload):
+    channel = ""                     # what post() reports as channel_id
+    def edit(self, message_id, payload, file=None, thread_id=None):
         self.edits.append((message_id, payload))
         if self.edit_error:
             raise self.edit_error
-    def execute(self, payload):
+    def execute(self, payload, file=None):
         self.posts.append(payload)
         if self.post_error:
             raise self.post_error
         return self.post_id
+    def post(self, payload, file=None, thread_id=None, thread_name=None,
+             tag_ids=None):
+        return (self.execute(payload) if file is None
+                else self.execute(payload, file)), self.channel
 
 
 def make_worker(client, ip="203.0.113.7"):
@@ -563,7 +568,7 @@ class TestMapPayload:
 
 
 class MapClient(FakeClient):
-    def edit(self, message_id, payload, file=None):
+    def edit(self, message_id, payload, file=None, thread_id=None):
         self.edits.append((message_id, payload, file))
         if self.edit_error:
             raise self.edit_error
@@ -679,3 +684,134 @@ class TestWorkerQueue:
         assert w.wait_idle(5)
         w.shutdown()
         assert sorted(got) == ["map", "status"]
+
+
+# ----------------------------------------------------------------------
+# Forum channels
+# ----------------------------------------------------------------------
+def forum_worker(opener):
+    w = DiscordStatusWorker(
+        on_result=lambda r: None, ip_lookup=lambda: "203.0.113.7",
+        client_factory=lambda url: WebhookClient(url, opener=opener,
+                                                 sleep=lambda s: None),
+        clock=FakeClock())
+    return w
+
+
+def sent(req):
+    """(method, query dict, JSON body) of a recorded request."""
+    import urllib.parse
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(req.full_url).query))
+    data = req.data or b""
+    body = json.loads(data) if data[:1] == b"{" else data
+    return req.get_method(), q, body
+
+
+def reply(**body):
+    return json.dumps(body).encode()
+
+
+class TestForum:
+    def test_title_starts_a_post_and_map_follows_into_it(self, tmp_path):
+        img = tmp_path / "map.png"
+        img.write_bytes(b"\x89PNG fake")
+        opener = FakeOpener(reply(id="m1", channel_id="t1"),
+                            reply(id="m2", channel_id="t1"))
+        w = forum_worker(opener)
+        cfg = enabled_cfg(forum_post_title="My Server", forum_tag_ids="11, x, 22",
+                          map_enabled=True, map_source="file", map_path=str(img))
+        r = w.process(cfg, snapshot(), "start")
+        assert r.ok and r.message_id == "m1" and r.thread_id == "t1"
+        method, q, body = sent(opener.requests[0])
+        assert method == "POST" and "thread_id" not in q
+        assert body["thread_name"] == "My Server"
+        assert body["applied_tags"] == ["11", "22"]
+        # The map job was queued with the same config (no thread id saved
+        # yet) — it must still go into the post just created.
+        r2 = w.process_map(cfg, snapshot(), "manual")
+        assert r2.ok and r2.thread_id == "t1"
+        _m, q2, body2 = sent(opener.requests[1])
+        assert q2.get("thread_id") == "t1"
+        assert b"thread_name" not in body2           # multipart: no new post
+
+    def test_edit_targets_the_remembered_post(self):
+        opener = FakeOpener(b"")
+        w = forum_worker(opener)
+        cfg = enabled_cfg(message_id="m1", forum_thread_id="t1")
+        r = w.process(cfg, snapshot(), "tick")
+        assert r.ok and r.message == "status message updated"
+        method, q, _ = sent(opener.requests[0])
+        assert method == "PATCH" and q["thread_id"] == "t1"
+
+    def test_thread_id_in_url_wins(self):
+        opener = FakeOpener(reply(id="m1", channel_id="99"))
+        w = forum_worker(opener)
+        cfg = enabled_cfg(webhook_url=WEBHOOK + "?thread_id=99",
+                          forum_post_title="ignored", forum_thread_id="t1")
+        r = w.process(cfg, snapshot(), "start")
+        _m, q, body = sent(opener.requests[0])
+        assert q["thread_id"] == "99" and "thread_name" not in body
+        assert r.thread_id == "99"
+
+    def test_forum_webhook_without_title_still_posts(self):
+        opener = FakeOpener(
+            http_error(400, {"code": 220001, "message": "Webhooks posted to "
+                             "forum channels must have a thread_name or thread_id"}),
+            reply(id="m1", channel_id="t9"))
+        w = forum_worker(opener)
+        r = w.process(enabled_cfg(), snapshot(), "start")
+        assert r.ok and r.thread_id == "t9"
+        assert "thread_name" not in sent(opener.requests[0])[2]
+        assert sent(opener.requests[1])[2]["thread_name"] == "Vintage Story server"
+
+    def test_deleted_post_is_replaced(self):
+        opener = FakeOpener(
+            http_error(404, {"code": 10003, "message": "Unknown Channel"}),
+            reply(id="m2", channel_id="t2"))
+        w = forum_worker(opener)
+        cfg = enabled_cfg(update_mode="post", forum_thread_id="t1",
+                          forum_post_title="My Server")
+        r = w.process(cfg, snapshot(), "tick")
+        assert r.ok and r.thread_id == "t2"
+        assert sent(opener.requests[0])[1]["thread_id"] == "t1"
+        _m, q, body = sent(opener.requests[1])
+        assert "thread_id" not in q and body["thread_name"] == "My Server"
+
+    def test_deleted_message_in_post_reposts_in_post(self):
+        opener = FakeOpener(
+            http_error(404, {"code": 10008, "message": "Unknown Message"}),
+            reply(id="m2", channel_id="t1"))
+        w = forum_worker(opener)
+        cfg = enabled_cfg(message_id="m1", forum_thread_id="t1")
+        r = w.process(cfg, snapshot(), "tick")
+        assert r.ok and r.message_id == "m2" and r.thread_id == "t1"
+        assert sent(opener.requests[1])[1]["thread_id"] == "t1"
+
+    def test_other_errors_are_reported(self):
+        opener = FakeOpener(http_error(403, {"code": 50013,
+                                             "message": "Missing Permissions"}))
+        w = forum_worker(opener)
+        r = w.process(enabled_cfg(forum_post_title="X"), snapshot(), "start")
+        assert not r.ok and "Missing Permissions" in r.message
+
+    def test_forget_thread(self):
+        opener = FakeOpener(reply(id="m1", channel_id="t1"),
+                            reply(id="m2", channel_id="t2"))
+        w = forum_worker(opener)
+        cfg = enabled_cfg(update_mode="post", forum_post_title="A")
+        w.process(cfg, snapshot(), "start")
+        w.forget_thread()
+        r = w.process(cfg, snapshot(), "tick")
+        assert r.thread_id == "t2"
+        assert sent(opener.requests[1])[2]["thread_name"] == "A"
+
+    def test_config_and_helpers(self):
+        from core.discord_status import parse_tag_ids, url_thread_id
+        cfg = normalize_config({"forum_post_title": "x" * 150,
+                                "forum_tag_ids": " 1, 2 ",
+                                "forum_thread_id": 5})
+        assert len(cfg["forum_post_title"]) == 100
+        assert cfg["forum_thread_id"] == "5"
+        assert parse_tag_ids("1, 2;3 x 4 5 6") == ["1", "2", "3", "4", "5"]
+        assert url_thread_id(WEBHOOK + "?thread_id=42") == "42"
+        assert url_thread_id(WEBHOOK) == ""

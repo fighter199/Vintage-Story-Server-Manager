@@ -109,6 +109,7 @@ def create_profile(settings: dict, name: str, copy_from: str | None = None) -> s
         if isinstance(new.get("discord"), dict):
             new["discord"]["message_id"] = ""
             new["discord"]["map_message_id"] = ""
+            new["discord"]["forum_thread_id"] = ""
     else:
         new = {"custom_commands": [], "autorun_rules": [], "player_totals": {}}
     profiles[clean] = new

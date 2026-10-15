@@ -16,7 +16,8 @@ import time
 
 # ── Local packages ─────────────────────────────────────────────────────
 from core.constants import LOG
-from core.discord_status import DiscordStatusScheduler, DiscordStatusWorker
+from core.discord_status import (DiscordStatusScheduler, DiscordStatusWorker,
+                                 url_thread_id)
 from core.settings import (load_discord_config, save_discord_config,
                            save_settings)
 from core.utils import read_server_info
@@ -152,11 +153,17 @@ class DiscordMixin:
             key = "map_message_id" if result.kind == "map" else "message_id"
             # Only adopt the id if it belongs to the webhook still
             # configured — the user may have changed it mid-flight.
-            if (cfg["webhook_url"] == result.webhook_url
-                    and cfg[key] != result.message_id):
+            if cfg["webhook_url"] == result.webhook_url:
+                changed = cfg[key] != result.message_id
                 cfg[key] = result.message_id
-                save_discord_config(self._settings, cfg)
-                save_settings(self._settings)
+                # The forum post VSSM created (not one fixed in the URL).
+                if (result.thread_id and not url_thread_id(cfg["webhook_url"])
+                        and cfg["forum_thread_id"] != result.thread_id):
+                    cfg["forum_thread_id"] = result.thread_id
+                    changed = True
+                if changed:
+                    save_discord_config(self._settings, cfg)
+                    save_settings(self._settings)
         if result.ok:
             LOG.info("discord %s (%s): %s", result.kind, result.reason,
                      result.message)

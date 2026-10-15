@@ -129,6 +129,8 @@ class FakeClient:
         return "m1"
     def edit(self, *a, **k):
         raise AssertionError("no edit expected")
+    def post(self, payload, file=None, **_forum):
+        return self.execute(payload, file), ""
 
 
 def make_worker(renderer=None):
