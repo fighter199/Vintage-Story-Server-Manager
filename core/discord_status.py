@@ -125,7 +125,20 @@ _DEFAULTS = {
     "map_command":           "",
     "map_command_wait_secs": 30,
     "map_message_id":        "",
+    # Forum channels: webhook posts must start or join a forum post.
+    "forum_post_title":      "",     # title of the post VSSM creates
+    "forum_tag_ids":         "",     # comma-separated tag ids (optional)
+    "forum_thread_id":       "",     # the post VSSM created (remembered)
 }
+
+# Title used when a webhook turns out to belong to a forum channel and
+# no title was set.
+DEFAULT_FORUM_TITLE = "Vintage Story server"
+
+# Discord JSON error codes.
+ERR_UNKNOWN_CHANNEL = 10003       # thread / forum post deleted
+ERR_UNKNOWN_MESSAGE = 10008
+ERR_FORUM_NEEDS_THREAD = 220001   # forum webhook without thread_name/_id
 
 
 # ----------------------------------------------------------------------
@@ -148,8 +161,10 @@ def normalize_config(cfg) -> dict:
               "map_mark_players"):
         out[k] = bool(out[k])
     for k in ("webhook_url", "address_override", "message_id",
-              "map_path", "map_command", "map_message_id"):
+              "map_path", "map_command", "map_message_id",
+              "forum_post_title", "forum_tag_ids", "forum_thread_id"):
         out[k] = str(out[k] or "").strip()
+    out["forum_post_title"] = out["forum_post_title"][:100]  # Discord's limit
     if out["update_mode"] not in UPDATE_MODES:
         out["update_mode"] = "edit"
     if out["map_source"] not in MAP_SOURCES:
@@ -161,6 +176,19 @@ def normalize_config(cfg) -> dict:
         except (TypeError, ValueError):
             out[k] = _DEFAULTS[k]
     return out
+
+
+def url_thread_id(url: str) -> str:
+    """The ?thread_id= in a webhook URL (posting into an existing forum
+    post or thread), or ""."""
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit((url or "").strip()).query)
+    return (query.get("thread_id") or [""])[0].strip()
+
+
+def parse_tag_ids(text: str) -> list[str]:
+    """Forum tag ids from "123, 456" (anything that isn't a number is
+    ignored). Discord allows up to 5."""
+    return [t for t in re.split(r"[\s,;]+", text or "") if t.isdigit()][:5]
 
 
 def validate_webhook_url(url: str) -> tuple[bool, str]:
@@ -370,9 +398,17 @@ def fetch_public_ip(opener=urllib.request.urlopen,
 # Webhook client
 # ----------------------------------------------------------------------
 class WebhookError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, code: int = 0):
         super().__init__(f"HTTP {status}: {message}")
         self.status = status
+        self.code = code            # Discord's JSON error code, if any
+
+    @property
+    def thread_gone(self) -> bool:
+        """The forum post / thread no longer exists (or the message in
+        it) — start a new one."""
+        return self.status == 404 or self.code in (ERR_UNKNOWN_CHANNEL,
+                                                   ERR_UNKNOWN_MESSAGE)
 
 
 class WebhookClient:
@@ -397,23 +433,54 @@ class WebhookClient:
         qs = ("?" + urllib.parse.urlencode(q)) if q else ""
         return self._base + suffix + qs
 
-    def execute(self, payload: dict, file: tuple[str, bytes] | None = None
-                ) -> str:
+    @property
+    def url_thread_id(self) -> str:
+        return dict(self._query).get("thread_id", "")
+
+    def _thread(self, thread_id: str | None) -> dict:
+        # A thread_id in the URL itself wins.
+        if thread_id and not self.url_thread_id:
+            return {"thread_id": thread_id}
+        return {}
+
+    def execute(self, payload: dict, file: tuple[str, bytes] | None = None,
+                thread_id: str | None = None, thread_name: str | None = None,
+                tag_ids: list[str] | None = None) -> str:
         """Post a new message (optionally with one file attached as
-        (filename, bytes)); return its message id."""
-        body = self._request("POST", self._url(wait="true"), payload, file)
-        return str((body or {}).get("id") or "")
+        (filename, bytes)); return its message id. Use post() to also
+        learn the forum post / thread it landed in."""
+        return self.post(payload, file, thread_id, thread_name, tag_ids)[0]
+
+    def post(self, payload: dict, file: tuple[str, bytes] | None = None,
+             thread_id: str | None = None, thread_name: str | None = None,
+             tag_ids: list[str] | None = None) -> tuple[str, str]:
+        """Post a new message; return (message id, channel id). In a
+        forum channel, `thread_name` starts a new forum post (with
+        `tag_ids` applied) and the channel id is that post's id;
+        `thread_id` posts into an existing one."""
+        payload = dict(payload)
+        if thread_name and not thread_id and not self.url_thread_id:
+            payload["thread_name"] = thread_name[:100]
+            if tag_ids:
+                payload["applied_tags"] = list(tag_ids)
+        body = self._request("POST", self._url(wait="true",
+                                               **self._thread(thread_id)),
+                             payload, file) or {}
+        return str(body.get("id") or ""), str(body.get("channel_id") or "")
 
     def edit(self, message_id: str, payload: dict,
-             file: tuple[str, bytes] | None = None) -> None:
-        """Edit a message previously posted by this webhook. With a
-        file, the new upload replaces the message's old attachments."""
+             file: tuple[str, bytes] | None = None,
+             thread_id: str | None = None) -> None:
+        """Edit a message previously posted by this webhook (in a forum
+        post / thread, pass its id). With a file, the new upload
+        replaces the message's old attachments."""
         # PATCH doesn't take username/avatar — strip anything it rejects.
         patch = {k: v for k, v in payload.items()
                  if k in ("content", "embeds", "allowed_mentions",
                           "attachments")}
         self._request("PATCH",
-                      self._url(f"/messages/{urllib.parse.quote(message_id)}"),
+                      self._url(f"/messages/{urllib.parse.quote(message_id)}",
+                                **self._thread(thread_id)),
                       patch, file)
 
     def _request(self, method: str, url: str, payload: dict,
@@ -445,12 +512,15 @@ class WebhookClient:
                 self._sleep(min(max(wait, 0.0), self.MAX_RETRY_WAIT))
                 return self._request(method, url, payload, file,
                                      _retried=True)
-            msg = detail
+            msg, code = detail, 0
             try:
-                msg = json.loads(detail).get("message") or detail
-            except (ValueError, AttributeError):
+                body = json.loads(detail)
+                msg = body.get("message") or detail
+                code = int(body.get("code") or 0)
+            except (ValueError, AttributeError, TypeError):
                 pass
-            raise WebhookError(e.code, (msg or e.reason or "")[:200]) from None
+            raise WebhookError(e.code, (msg or e.reason or "")[:200],
+                               code) from None
         except (urllib.error.URLError, socket.timeout, OSError) as e:
             raise WebhookError(0, f"network error: {e}") from None
 
@@ -572,6 +642,7 @@ class DiscordResult:
     message_id:  str = ""     # set when a message was posted / edited
     address:     str = ""
     kind:        str = "status"   # "status" | "map"
+    thread_id:   str = ""     # forum post the message went to, if any
 
 
 class DiscordStatusWorker:
@@ -600,6 +671,10 @@ class DiscordStatusWorker:
         # (path, mtime, size) of the last map uploaded, so an unchanged
         # export isn't re-uploaded every interval.
         self._last_map_sig: tuple | None = None
+        # Forum post created for a webhook URL, until the app has saved
+        # it in the config — so the status card and the map image of
+        # the same round land in one post, not two.
+        self._threads: dict[str, str] = {}
 
     # -- public ---------------------------------------------------------
     def submit(self, cfg: dict, snapshot: dict, reason: str,
@@ -635,6 +710,64 @@ class DiscordStatusWorker:
             self._pending.clear()
             self._cv.notify_all()
 
+    def forget_thread(self, url: str | None = None) -> None:
+        """Start a new forum post next time (for `url`, or for all)."""
+        with self._cv:
+            if url is None:
+                self._threads.clear()
+            else:
+                self._threads.pop(url, None)
+
+    def _deliver(self, client, cfg: dict, url: str, payload: dict,
+                 msg_id: str, file=None) -> tuple[str, str, bool]:
+        """Edit `msg_id` (edit mode) or post a new message — in the right
+        forum post when the webhook belongs to a forum channel. Returns
+        (message id, forum post id or "", edited?). Raises WebhookError.
+
+        Forum handling: a ?thread_id= in the URL always wins. Otherwise
+        the remembered post (config, or created earlier this session)
+        is used; with none, a title starts a new post. A forum webhook
+        used without a title gets DEFAULT_FORUM_TITLE rather than an
+        error, and a deleted post is replaced by a new one."""
+        fixed = url_thread_id(url)
+        thread = fixed or cfg.get("forum_thread_id") or self._threads.get(url, "")
+        if cfg.get("update_mode") == "edit" and msg_id:
+            try:
+                client.edit(msg_id, payload, file, thread_id=thread or None)
+                return msg_id, thread, True
+            except WebhookError as e:
+                # Message (or its forum post) deleted, or webhook
+                # recreated: post a fresh one below.
+                if not e.thread_gone:
+                    raise
+        title = cfg.get("forum_post_title") or ""
+        tags = parse_tag_ids(cfg.get("forum_tag_ids"))
+        for attempt in (1, 2):
+            try:
+                if thread:
+                    new_id, _ch = client.post(payload, file, thread_id=thread)
+                elif title:
+                    new_id, ch = client.post(payload, file, thread_name=title,
+                                             tag_ids=tags)
+                    thread = ch
+                else:
+                    new_id, _ch = client.post(payload, file)
+                break
+            except WebhookError as e:
+                if attempt == 1 and thread and not fixed and e.thread_gone:
+                    thread = ""                          # post was deleted
+                    title = title or DEFAULT_FORUM_TITLE
+                    continue
+                if attempt == 1 and not thread and not title and \
+                        e.code == ERR_FORUM_NEEDS_THREAD:
+                    title = DEFAULT_FORUM_TITLE          # forum, no title
+                    continue
+                raise
+        if thread and not fixed:
+            with self._cv:
+                self._threads[url] = thread
+        return new_id, thread, False
+
     def public_ip(self, refresh: bool = False) -> str | None:
         """Cached public IP; refreshed when stale or on request."""
         now = self._clock()
@@ -658,20 +791,12 @@ class DiscordStatusWorker:
         client = self._client_factory(url)
 
         try:
-            msg_id = cfg.get("message_id") or ""
-            if cfg.get("update_mode") == "edit" and msg_id:
-                try:
-                    client.edit(msg_id, payload)
-                    return DiscordResult(True, "status message updated",
-                                         reason, url, msg_id, address)
-                except WebhookError as e:
-                    # 404 = message deleted (or webhook recreated):
-                    # fall through and post a fresh one.
-                    if e.status != 404:
-                        raise
-            new_id = client.execute(payload)
-            return DiscordResult(True, "status message posted",
-                                 reason, url, new_id, address)
+            new_id, thread, edited = self._deliver(
+                client, cfg, url, payload, cfg.get("message_id") or "")
+            return DiscordResult(True, "status message updated" if edited
+                                 else "status message posted",
+                                 reason, url, new_id, address,
+                                 thread_id=thread)
         except WebhookError as e:
             return DiscordResult(False, str(e), reason, url, "", address)
         except Exception as e:      # never let the worker thread die
@@ -687,8 +812,9 @@ class DiscordStatusWorker:
         Now") upload always goes out."""
         url = cfg.get("webhook_url") or ""
 
-        def result(ok, msg, msg_id=""):
-            return DiscordResult(ok, msg, reason, url, msg_id, kind="map")
+        def result(ok, msg, msg_id="", thread=""):
+            return DiscordResult(ok, msg, reason, url, msg_id, kind="map",
+                                 thread_id=thread)
 
         ok, why = validate_webhook_url(url)
         if not ok:
@@ -705,18 +831,12 @@ class DiscordStatusWorker:
         payload = build_map_payload(snapshot, filename)
         client = self._client_factory(url)
         try:
-            msg_id = cfg.get("map_message_id") or ""
-            if cfg.get("update_mode") == "edit" and msg_id:
-                try:
-                    client.edit(msg_id, payload, (filename, data))
-                    self._last_map_sig = sig
-                    return result(True, "map image updated", msg_id)
-                except WebhookError as e:
-                    if e.status != 404:
-                        raise
-            new_id = client.execute(payload, (filename, data))
+            new_id, thread, edited = self._deliver(
+                client, cfg, url, payload, cfg.get("map_message_id") or "",
+                (filename, data))
             self._last_map_sig = sig
-            return result(True, "map image posted", new_id)
+            return result(True, "map image updated" if edited
+                          else "map image posted", new_id, thread)
         except WebhookError as e:
             return result(False, str(e))
         except Exception as e:      # never let the worker thread die

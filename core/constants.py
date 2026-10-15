@@ -8,7 +8,7 @@ import logging.handlers
 import os
 
 APP_NAME    = "VSSM"
-APP_VERSION = "3.8"
+APP_VERSION = "3.8.1"
 SETTINGS_SCHEMA_VERSION = 7
 
 # -----------------------------------------------------------------------

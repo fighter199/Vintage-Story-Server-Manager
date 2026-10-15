@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.7**
+Current version: **3.8.1**
 
 ## Feature highlights
 
@@ -458,6 +458,14 @@ in, tick **Enable**, and **💾 Save**. **▶ Post Now** sends a test.
   exported by a map mod* and point it at the mod's image file or
   folder, with an optional export command VSSM sends to the console
   first. Unchanged maps are skipped.
+- **Forum channels** — a webhook can belong to a forum channel too.
+  VSSM starts one forum post (titled *Forum post title*, or "Vintage
+  Story server" if blank, with the *Forum tag ids* applied if your
+  forum requires tags) and keeps its status card and map images in
+  that post; the tab shows which post it's using. If the post is
+  deleted, the next update starts a new one; **New Messages** also
+  starts a new post. To post into a post or thread that already
+  exists, add `?thread_id=<its id>` to the webhook URL instead.
 
 Settings are per-profile, so each server can post to its own channel;
 a duplicated profile starts with its own cards. The webhook URL is
@@ -573,7 +581,7 @@ engine, autorun scheduler, player timers, settings migration, chat-log
 store, backup manager (family pruning, reason prefixes), backup/restore
 zip round-trips, profiles, savegame reading and chunk deletion, the
 Discord poster (webhook client, scheduler, worker, savegame → PNG map
-rendering), and utility helpers — 619 tests at the time of writing.
+rendering), and utility helpers — 628 tests at the time of writing.
 
 ```bash
 python run_tests.py            # stdlib-only runner (+ optional ruff/pyflakes lint)
@@ -603,6 +611,14 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.8.1 (October 2026)
+
+- **Discord forum channels** — a webhook in a forum channel now works:
+  VSSM starts one forum post (*Forum post title*, optional *Forum tag
+  ids*) and keeps the status card and map images in it, replacing it if
+  it's deleted. `?thread_id=` in the URL still posts into an existing
+  post or thread.
 
 ### v3.8 (October 2026)
 

@@ -18,7 +18,8 @@ from .theme import Theme
 from .widgets import (TermButton, TermEntry, TermCheckbutton,
                       ScrollableFrame, auto_wrap, flow_children,
                       panel_header)
-from core.discord_status import validate_webhook_url
+from core.discord_status import (parse_tag_ids, url_thread_id,
+                                 validate_webhook_url)
 
 # Display label <-> config value for the update-mode combobox
 _MODES = [("Edit one status message (recommended)", "edit"),
@@ -65,7 +66,21 @@ class DiscordTab:
         self._map_interval_var.set(str(cfg["map_interval_mins"]))
         self._map_cmd_var.set(cfg["map_command"])
         self._map_wait_var.set(str(cfg["map_command_wait_secs"]))
+        self._forum_title_var.set(cfg["forum_post_title"])
+        self._forum_tags_var.set(cfg["forum_tag_ids"])
+        self._show_forum_status(cfg)
         self._sync_map_source()
+
+    def _show_forum_status(self, cfg: dict) -> None:
+        fixed = url_thread_id(cfg["webhook_url"])
+        if fixed:
+            text = f"Posting into the forum post / thread {fixed} (from the URL)."
+        elif cfg["forum_thread_id"]:
+            text = (f"Posting into forum post {cfg['forum_thread_id']}. "
+                    "New Messages starts a new post.")
+        else:
+            text = ""
+        self._forum_status_var.set(text)
 
     def show_result(self, result) -> None:
         """Called by the host (on the Tk thread) after each send."""
@@ -80,6 +95,7 @@ class DiscordTab:
         else:
             self._result_var.set(f"[{ts}] ✗ {what}: {result.message}")
             self._result_label.configure(fg=Theme.RED)
+        self._show_forum_status(self._load_config())
 
     def show_detected_ip(self, ip: str | None) -> None:
         if ip:
@@ -153,6 +169,26 @@ class DiscordTab:
         hint("Use a hostname (e.g. play.example.com) to hide your raw IP. "
              "The port from serverconfig.json is appended automatically. "
              "Auto-detect asks api.ipify.org for your public address.")
+
+        # Forum channels
+        label("FORUM POST TITLE  (forum channels only):")
+        self._forum_title_var = tk.StringVar()
+        TermEntry(body, textvariable=self._forum_title_var,
+                  font_spec=F_NORMAL).pack(fill=tk.X, padx=pad, ipady=3)
+        label("FORUM TAG IDS  (optional, comma-separated):", pady=(6, 1))
+        self._forum_tags_var = tk.StringVar()
+        TermEntry(body, textvariable=self._forum_tags_var,
+                  font_spec=F_NORMAL).pack(fill=tk.X, padx=pad, ipady=3)
+        self._forum_status_var = tk.StringVar(value="")
+        auto_wrap(tk.Label(body, textvariable=self._forum_status_var,
+                           fg=Theme.MUTED, bg=Theme.BG_PANEL, font=F_SMALL)
+                  ).pack(fill=tk.X, padx=pad, pady=(2, 0))
+        hint("For a webhook in a forum channel: VSSM starts one forum post "
+             "with this title and keeps posting its status and map there "
+             "(blank = \"Vintage Story server\"). Tags are needed only if the "
+             "forum requires them — right-click a tag with Developer Mode on "
+             "→ Copy ID. To post into a post that already exists instead, "
+             "add ?thread_id=<post id> to the webhook URL.")
 
         # Update mode + interval
         label("UPDATE MODE:")
@@ -384,6 +420,11 @@ class DiscordTab:
                            if url == saved["webhook_url"] else ""),
             "map_message_id": (saved["map_message_id"]
                                if url == saved["webhook_url"] else ""),
+            "forum_post_title":      self._forum_title_var.get().strip(),
+            "forum_tag_ids":         ", ".join(
+                parse_tag_ids(self._forum_tags_var.get())),
+            "forum_thread_id": (saved["forum_thread_id"]
+                                if url == saved["webhook_url"] else ""),
         }
 
     def _on_save(self, quiet: bool = False) -> bool:
@@ -447,7 +488,10 @@ class DiscordTab:
         cfg = self._load_config()
         cfg["message_id"] = ""
         cfg["map_message_id"] = ""
+        cfg["forum_thread_id"] = ""
         self._save_config(cfg)
+        self._app._discord_worker.forget_thread()
+        self._show_forum_status(cfg)
         self._app._notify("Next updates will post new messages.",
                           level="info", duration_ms=2200)
 
