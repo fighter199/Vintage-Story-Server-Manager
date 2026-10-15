@@ -6,7 +6,7 @@ Tkinter, styled as an amber CRT terminal, with zero required
 dependencies — download, point it at `VintagestoryServer.exe`, press
 **▶ Start**.
 
-Current version: **3.7**
+Current version: **3.8.1**
 
 ## Feature highlights
 
@@ -611,6 +611,14 @@ path or missing prerequisite, `2` snippet mismatch (nothing written),
 containing `VSSM.py`.
 
 ## Recent changes
+
+### v3.8.1 (October 2026)
+
+- **Discord forum channels** — a webhook in a forum channel now works:
+  VSSM starts one forum post (*Forum post title*, optional *Forum tag
+  ids*) and keeps the status card and map images in it, replacing it if
+  it's deleted. `?thread_id=` in the URL still posts into an existing
+  post or thread.
 
 ### v3.8 (October 2026)
 
